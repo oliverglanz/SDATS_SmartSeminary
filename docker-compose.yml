@@ -1,0 +1,37 @@
+services:
+  streamline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streamline
+    restart: unless-stopped
+    ports:
+      - "${SMART_SEMINARY_BIND_ADDRESS:-0.0.0.0}:${SMART_SEMINARY_PORT:-8501}:8501"
+    environment:
+      SMART_SEMINARY_APP_TITLE: "${SMART_SEMINARY_APP_TITLE:-Smart Seminary Demo}"
+      SMART_SEMINARY_PORT: "${SMART_SEMINARY_PORT:-8501}"
+      SMART_SEMINARY_ENABLE_CLOSE_BUTTON: "${SMART_SEMINARY_ENABLE_CLOSE_BUTTON:-false}"
+      SMART_SEMINARY_PASSWORD_KAREN: "${SMART_SEMINARY_PASSWORD_KAREN:-neraK}"
+      SMART_SEMINARY_PASSWORD_SHARI: "${SMART_SEMINARY_PASSWORD_SHARI:-irahS}"
+    volumes:
+      - "./outputs_app:/app/outputs_app"
+      - "../SmartBudgeting/Step1_input_ShariSheets:/SmartBudgeting/Step1_input_ShariSheets:ro"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os, socket, sys
+          sock = socket.socket()
+          sock.settimeout(2)
+          try:
+              sock.connect(("127.0.0.1", int(os.environ.get("SMART_SEMINARY_PORT", "8501"))))
+          except OSError:
+              sys.exit(1)
+          finally:
+              sock.close()
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
