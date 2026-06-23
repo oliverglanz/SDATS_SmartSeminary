@@ -4,3 +4,5 @@ streamlit
 pypdf
 reportlab
 xlsxwriter
+numpy
+xlrd

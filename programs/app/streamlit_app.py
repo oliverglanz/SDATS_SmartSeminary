@@ -10,6 +10,7 @@ import streamlit.components.v1 as components
 
 from app.contracts_from_donsheet import cleanup_result, generate_contracts_from_uploads
 from app.contracts_from_sharisheet import generate_contracts_from_sharisheet_uploads
+from app.banner_donsheet_comparison import OUTPUT_FILENAME, generate_banner_donsheet_comparison
 from app.config import (
     APP_TITLE,
     DEFAULT_DONSHEET_PATH,
@@ -32,6 +33,7 @@ AUTH_KEY_PREFIX = "smart_seminary_auth_"
 SHARI_CONTRACT_RESULT_KEY = "smart_seminary_shari_contract_result"
 SHARI_BUDGET_RESULT_KEY = "smart_seminary_shari_budget_result"
 DEPARTMENT_ADMIN_RESULT_KEY = "smart_seminary_department_admin_result"
+BANNER_COMPARISON_RESULT_KEY = "smart_seminary_banner_comparison_result"
 
 ACTION_CONTRACT_DONSHEET = "Create contract PDFs - based on DonSheet"
 ACTION_BUDGET_DONSHEET = "Create budget report workbook - based on DonSheet"
@@ -472,15 +474,72 @@ def _render_shari() -> None:
         )
 
 
+def _render_banner_donsheet_comparison() -> None:
+    st.subheader("Banner-DonSheet Comparison")
+    st.write("Upload a Banner Sheet and a DonSheet to create a color-coded discrepancy report.")
+    banner_file = st.file_uploader(
+        "Upload Banner Sheet",
+        type=["xlsx", "xls", "csv"],
+        accept_multiple_files=False,
+        key="banner_comparison_banner_upload",
+    )
+    donsheet_file = st.file_uploader(
+        "Upload DonSheet",
+        type=["xlsx"],
+        accept_multiple_files=False,
+        key="banner_comparison_donsheet_upload",
+    )
+
+    if st.button("Create discrepancy report", type="primary", key="banner_comparison_generate"):
+        if banner_file is None or donsheet_file is None:
+            st.error("Upload both a Banner Sheet and a DonSheet before creating the report.")
+        else:
+            with st.spinner("Comparing Banner and DonSheet data..."):
+                try:
+                    result = generate_banner_donsheet_comparison(
+                        donsheet_file.getvalue(),
+                        banner_file.getvalue(),
+                        banner_file.name,
+                    )
+                except (KeyError, ValueError) as error:
+                    st.error(str(error))
+                else:
+                    st.session_state[BANNER_COMPARISON_RESULT_KEY] = result
+
+    result = st.session_state.get(BANNER_COMPARISON_RESULT_KEY)
+    if result is not None:
+        st.success(
+            f"Created the discrepancy report with {result.discrepancy_count} discrepancy item(s) across {result.compared_columns} comparable column(s)."
+        )
+        st.download_button(
+            "Download discrepancy report",
+            data=result.excel_bytes,
+            file_name=OUTPUT_FILENAME,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            key="banner_comparison_download",
+        )
+        if st.button("Clear comparison result", key="banner_comparison_clear"):
+            st.session_state.pop(BANNER_COMPARISON_RESULT_KEY, None)
+            st.rerun()
+
+
 def _render_home() -> None:
     st.write("Choose which workspace you want to open.")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.button("Department Admins", use_container_width=True, on_click=_set_role, args=("Department Admins",))
     with col2:
         st.button("Karen", use_container_width=True, on_click=_set_role, args=("Karen",))
     with col3:
         st.button("Shari", use_container_width=True, on_click=_set_role, args=("Shari",))
+    with col4:
+        st.button(
+            "Banner-DonSheet Comparison",
+            use_container_width=True,
+            on_click=_set_role,
+            args=("Banner-DonSheet Comparison",),
+        )
 
 
 def main() -> None:
@@ -559,6 +618,8 @@ def main() -> None:
         _render_karen()
     elif role == "Shari":
         _render_shari()
+    elif role == "Banner-DonSheet Comparison":
+        _render_banner_donsheet_comparison()
     else:
         _render_home()
 
