@@ -26,7 +26,7 @@ DEFAULT_PORT = _get_env_int("SMART_SEMINARY_PORT", 8501)
 ENABLE_CLOSE_BUTTON = _get_env_bool("SMART_SEMINARY_ENABLE_CLOSE_BUTTON", True)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DONSHEET_PATH = PROJECT_ROOT / "0_source_files" / "default_DonSheet" / "DonSheet_default_empty_v20260402.xlsx"
+DEFAULT_DONSHEET_PATH = PROJECT_ROOT / "0_source_files" / "default_DonSheet" / "DonSheet_default_empty_v20260508.xlsx"
 DEFAULT_SHARISHEET_DIR = Path(
     os.getenv(
         "SMART_SEMINARY_SHARISHEET_DIR",

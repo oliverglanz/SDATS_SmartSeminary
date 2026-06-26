@@ -10,6 +10,11 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from ..excel_utils import workbook_to_excel_bytes
 from ..models import ReportBundle, ReportResult
+from ..schedule_from_donsheet import (
+    DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
+    DEPARTMENT_ADMIN_WEEKLY_ROOMS,
+    generate_schedule_outputs_from_payloads,
+)
 
 
 DEFAULT_PROGRAM_ORDER = [
@@ -1579,7 +1584,11 @@ def generate_department_contracts_overview_report(df: pd.DataFrame, department: 
     )
 
 
-def generate_department_overview_bundle(df: pd.DataFrame, department: str) -> ReportResult:
+def generate_department_overview_bundle(
+    df: pd.DataFrame,
+    department: str,
+    donsheet_payloads: list[tuple[str, bytes]] | None = None,
+) -> ReportResult:
     working = _filter_department(_prep_working_df(df), department)
     sheets = {
         "report_001a": _overview_report_001a(working),
@@ -1594,6 +1603,18 @@ def generate_department_overview_bundle(df: pd.DataFrame, department: str) -> Re
     workbook = load_workbook(BytesIO(workbook_bytes))
     contracts_workbook = load_workbook(BytesIO(contracts_report.excel_bytes))
     _clone_sheet_into_workbook(contracts_workbook.active, workbook, "ContractsOverview")
+    if donsheet_payloads:
+        schedule_report = generate_schedule_outputs_from_payloads(
+            donsheet_payloads,
+            source_name=f"{department}_department_admin",
+            department=department,
+            weekly_room_order=DEPARTMENT_ADMIN_WEEKLY_ROOMS,
+            class_column_width=DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
+        )
+        schedule_workbook = load_workbook(BytesIO(schedule_report.excel_bytes))
+        for sheet_name in ["Weekly Schedule", "SYNC Schedule", "ASYNC Classes"]:
+            if sheet_name in schedule_workbook.sheetnames:
+                _clone_sheet_into_workbook(schedule_workbook[sheet_name], workbook, sheet_name)
     combined_buffer = BytesIO()
     workbook.save(combined_buffer)
     preview_df = sheets["report_001a"]
@@ -1603,7 +1624,7 @@ def generate_department_overview_bundle(df: pd.DataFrame, department: str) -> Re
         excel_bytes=combined_buffer.getvalue(),
         output_filename=f"{department}_department_overview_reports_demo.xlsx",
         worksheet_name="report_001a",
-        metadata={"department": department, "sheet_count": str(len(sheets) + 1)},
+        metadata={"department": department, "sheet_count": str(len(workbook.sheetnames))},
     )
 
 

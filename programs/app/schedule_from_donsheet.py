@@ -48,6 +48,8 @@ SUBJECT_FILLS = {
     "MSSN": "#a4c2f4",
 }
 ROOM_ORDER = ["N108", "N110", "N135", "N150", "S115", "S120", "N215", "N235", "N310", "N335", "S340"]
+DEPARTMENT_ADMIN_WEEKLY_ROOMS = ["N110", "N150", "S120", "N235", "N310", "N335", "S340"]
+DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH = 25
 ROOM_HEADER_FILL = "#ffff00"
 TITLE_FILL_SYNC = "#b6d7a8"
 TITLE_FILL_SYNC_ASYNC = "#ffe599"
@@ -69,8 +71,47 @@ class ScheduleGenerationResult:
     pdf_filename: str
 
 
-def generate_schedule_outputs(source_name: str, uploaded_bytes: bytes) -> ScheduleGenerationResult:
+def generate_schedule_outputs(
+    source_name: str,
+    uploaded_bytes: bytes,
+    department: str | None = None,
+    weekly_room_order: list[str] | None = None,
+    class_column_width: int | float | None = None,
+) -> ScheduleGenerationResult:
     df = _load_raw_donsheet(uploaded_bytes)
+    df = _filter_department(df, department)
+    return _generate_schedule_outputs_from_df(
+        source_name,
+        df,
+        weekly_room_order=weekly_room_order,
+        class_column_width=class_column_width,
+    )
+
+
+def generate_schedule_outputs_from_payloads(
+    payloads: list[tuple[str, bytes]],
+    source_name: str = "DonSheet",
+    department: str | None = None,
+    weekly_room_order: list[str] | None = None,
+    class_column_width: int | float | None = None,
+) -> ScheduleGenerationResult:
+    frames = [_load_raw_donsheet(uploaded_bytes) for _, uploaded_bytes in payloads]
+    df = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+    df = _filter_department(df, department)
+    return _generate_schedule_outputs_from_df(
+        source_name,
+        df,
+        weekly_room_order=weekly_room_order,
+        class_column_width=class_column_width,
+    )
+
+
+def _generate_schedule_outputs_from_df(
+    source_name: str,
+    df: pd.DataFrame,
+    weekly_room_order: list[str] | None = None,
+    class_column_width: int | float | None = None,
+) -> ScheduleGenerationResult:
     title_method_map = _build_title_method_map(df)
     course_annotation_map = _load_course_annotation_map()
     async_report_df = _build_async_report_df(df, course_annotation_map)
@@ -99,6 +140,8 @@ def generate_schedule_outputs(source_name: str, uploaded_bytes: bytes) -> Schedu
         sync_block_order,
         sync_special_rows,
         sync_term_summary_map,
+        weekly_room_order,
+        class_column_width,
     )
     pdf_bytes = _build_schedule_pdf(
         slots,
@@ -123,6 +166,32 @@ def generate_schedule_outputs(source_name: str, uploaded_bytes: bytes) -> Schedu
         excel_filename=f"{stem}_weekly_schedule.xlsx",
         pdf_filename=f"{stem}_weekly_schedule.pdf",
     )
+
+
+def _filter_department(df: pd.DataFrame, department: str | None) -> pd.DataFrame:
+    if df.empty or not department:
+        return df
+    department_value = str(department).strip()
+    if not department_value:
+        return df
+    department_columns = [
+        "SEM Department {Scacrse Dept}",
+        "SEM Department",
+        "Department",
+    ]
+    masks = [
+        df[column].astype("string").str.strip().eq(department_value).fillna(False)
+        for column in department_columns
+        if column in df.columns
+    ]
+    if department_value == "OTST" and "Subject" in df.columns:
+        masks.append(df["Subject"].astype("string").str.strip().eq("ANEA").fillna(False))
+    if not masks:
+        return df.iloc[0:0].copy()
+    mask = masks[0]
+    for next_mask in masks[1:]:
+        mask = mask | next_mask
+    return df.loc[mask].copy()
 
 
 def _load_raw_donsheet(uploaded_bytes: bytes) -> pd.DataFrame:
@@ -737,9 +806,12 @@ def _write_schedule_sheet(
     special_rows: dict[str, str],
     term_summary_map: dict[str, str],
     report_title: str,
+    room_order: list[str] | None = None,
+    class_column_width: int | float | None = None,
 ) -> None:
     rooms_present = sorted(slots["Room"].dropna().unique(), key=_room_sort_key) if not slots.empty else []
-    rooms = [room for room in ROOM_ORDER if room in rooms_present]
+    ordered_rooms = room_order or ROOM_ORDER
+    rooms = [room for room in ordered_rooms if room in rooms_present or room_order is not None]
     floor_a = [r for r in ["N108", "N110", "N135", "N150", "S115", "S120"] if r in rooms]
     floor_b = [r for r in ["N215", "N235", "N310"] if r in rooms]
     floor_c = [r for r in ["N335", "S340"] if r in rooms]
@@ -803,7 +875,7 @@ def _write_schedule_sheet(
     timeblock_header_fmt = book.add_format({"bold": True, "font_size": 10, "font_color": "black", "align": "center", "valign": "vcenter", "bg_color": TIMEBLOCK_FILL, "top": 2, "top_color": dark, "bottom": 2, "bottom_color": dark, "left": 1, "left_color": thin_gray, "right": 1, "right_color": thin_gray})
     sheet.set_column(0, 0, 24)
     for i in range(1, len(rooms) + 1):
-        sheet.set_column(i, i, 26)
+        sheet.set_column(i, i, class_column_width or 26)
     last_col = max(len(rooms), 1)
     sheet.merge_range(0, 0, 0, last_col, report_title, title_fmt)
     sheet.set_row(0, 24)
@@ -900,6 +972,7 @@ def _write_sync_schedule_sheet(
     special_rows: dict[str, str],
     term_summary_map: dict[str, str],
     report_title: str,
+    class_column_width: int | float | None = None,
 ) -> None:
     display_blocks = _sync_display_blocks(block_order, special_rows)
     slot_counts = [
@@ -958,7 +1031,7 @@ def _write_sync_schedule_sheet(
 
     sheet.set_column(0, 0, 16)
     for i in range(1, max_slots + 1):
-        sheet.set_column(i, i, 28)
+        sheet.set_column(i, i, class_column_width or 28)
     last_col = max_slots
     sheet.merge_range(0, 0, 0, last_col, report_title, title_fmt)
     sheet.set_row(0, 24)
@@ -1027,6 +1100,8 @@ def _build_schedule_excel(
     sync_block_order: list[str],
     sync_special_rows: dict[str, str],
     sync_term_summary_map: dict[str, str],
+    weekly_room_order: list[str] | None = None,
+    class_column_width: int | float | None = None,
 ) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -1040,6 +1115,8 @@ def _build_schedule_excel(
             special_rows,
             term_summary_map,
             "Printable Weekly Schedule - In Person Classes",
+            weekly_room_order,
+            class_column_width,
         )
         _write_sync_schedule_sheet(
             writer,
@@ -1051,6 +1128,7 @@ def _build_schedule_excel(
             sync_special_rows,
             sync_term_summary_map,
             "Printable Weekly Schedule - Sync Classes",
+            class_column_width,
         )
         _write_async_schedule_sheet(
             writer,

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import signal
 import threading
+from datetime import datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -39,6 +40,7 @@ ACTION_CONTRACT_DONSHEET = "Create contract PDFs - based on DonSheet"
 ACTION_BUDGET_DONSHEET = "Create budget report workbook - based on DonSheet"
 ACTION_CONTRACT_SHARISHEET = "Create contract PDFs - based on ShariSheet"
 ACTION_BUDGET_SHARISHEET = "Create budget report workbook - based on ShariSheet"
+APP_VERSION_LABEL = f"version {datetime.now().strftime('%Y%m%d')}"
 
 
 def _shutdown_app() -> None:
@@ -83,18 +85,21 @@ def _credits_per_teacher_html_table(dataframe) -> str:
     )
 
 
-def _build_result(uploaded_files, use_sample: bool):
+def _donsheet_payloads(uploaded_files, use_sample: bool) -> list[tuple[str, bytes]]:
+    payloads = [(uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in (uploaded_files or [])]
+    if use_sample and not payloads:
+        default_path = Path(DEFAULT_DONSHEET_PATH)
+        payloads.append((default_path.name, default_path.read_bytes()))
+    return payloads
+
+
+def _build_result_from_payloads(payloads: list[tuple[str, bytes]]):
     results = []
     source_names = []
 
-    for uploaded_file in uploaded_files:
-        results.append(build_canonical_dataframe(uploaded_file.getvalue()))
-        source_names.append(uploaded_file.name)
-
-    if use_sample and not uploaded_files:
-        default_path = Path(DEFAULT_DONSHEET_PATH)
-        results.append(build_canonical_dataframe(default_path.read_bytes()))
-        source_names.append(default_path.name)
+    for source_name, source_bytes in payloads:
+        results.append(build_canonical_dataframe(source_bytes))
+        source_names.append(source_name)
 
     combined_result = combine_normalization_results(results)
     return combined_result, source_names
@@ -190,11 +195,12 @@ def _render_report_bundle(result, source_names: list[str], bundle) -> None:
 def _load_result_for_current_role(uploaded_files, use_sample: bool):
     if not uploaded_files and not use_sample:
         st.error("Upload a DonSheet workbook or enable the bundled DonSheet option.")
-        return None, []
+        return None, [], []
 
     with st.spinner("Normalizing DonSheet workbook..."):
-        result, source_names = _build_result(uploaded_files, use_sample)
-    return result, source_names
+        payloads = _donsheet_payloads(uploaded_files, use_sample)
+        result, source_names = _build_result_from_payloads(payloads)
+    return result, source_names, payloads
 
 
 def _sharisheet_payloads(uploaded_files, use_folder: bool) -> list[tuple[str, bytes]]:
@@ -239,10 +245,10 @@ def _render_department_admins() -> None:
     )
 
     if st.button("Generate department overview reports", type="primary", key="department_admin_generate"):
-        result, source_names = _load_result_for_current_role(uploaded_files, use_sample)
+        result, source_names, donsheet_payloads = _load_result_for_current_role(uploaded_files, use_sample)
         if result is None:
             return
-        report = generate_department_overview_bundle(result.canonical_df, selected_department)
+        report = generate_department_overview_bundle(result.canonical_df, selected_department, donsheet_payloads)
         st.session_state[DEPARTMENT_ADMIN_RESULT_KEY] = {
             "result": result,
             "source_names": source_names,
@@ -449,7 +455,7 @@ def _render_shari() -> None:
             result, source_names = _load_sharisheet_result(uploaded_files, use_sample)
             source_label = "sharisheet"
         else:
-            result, source_names = _load_result_for_current_role(uploaded_files, use_sample)
+            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample)
             source_label = "donsheet"
         if result is None:
             return
@@ -540,6 +546,27 @@ def _render_home() -> None:
             on_click=_set_role,
             args=("Banner-DonSheet Comparison",),
         )
+    st.markdown(
+        f"""
+        <div class="smart-version-label">{APP_VERSION_LABEL}</div>
+        <style>
+        .smart-version-label {{
+            position: fixed;
+            right: 1.25rem;
+            bottom: 0.75rem;
+            z-index: 999;
+            color: #cbd5e1;
+            font-size: 0.82rem;
+            font-weight: 500;
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(15, 23, 42, 0.95);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
