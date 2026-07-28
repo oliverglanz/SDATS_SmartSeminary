@@ -76,7 +76,8 @@ def generate_schedule_outputs(
     uploaded_bytes: bytes,
     department: str | None = None,
     weekly_room_order: list[str] | None = None,
-    class_column_width: int | float | None = None,
+    weekly_class_column_width: int | float | None = None,
+    sync_class_column_width: int | float | None = None,
 ) -> ScheduleGenerationResult:
     df = _load_raw_donsheet(uploaded_bytes)
     df = _filter_department(df, department)
@@ -84,7 +85,8 @@ def generate_schedule_outputs(
         source_name,
         df,
         weekly_room_order=weekly_room_order,
-        class_column_width=class_column_width,
+        weekly_class_column_width=weekly_class_column_width,
+        sync_class_column_width=sync_class_column_width,
     )
 
 
@@ -93,7 +95,8 @@ def generate_schedule_outputs_from_payloads(
     source_name: str = "DonSheet",
     department: str | None = None,
     weekly_room_order: list[str] | None = None,
-    class_column_width: int | float | None = None,
+    weekly_class_column_width: int | float | None = None,
+    sync_class_column_width: int | float | None = None,
 ) -> ScheduleGenerationResult:
     frames = [_load_raw_donsheet(uploaded_bytes) for _, uploaded_bytes in payloads]
     df = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
@@ -102,7 +105,8 @@ def generate_schedule_outputs_from_payloads(
         source_name,
         df,
         weekly_room_order=weekly_room_order,
-        class_column_width=class_column_width,
+        weekly_class_column_width=weekly_class_column_width,
+        sync_class_column_width=sync_class_column_width,
     )
 
 
@@ -110,7 +114,8 @@ def _generate_schedule_outputs_from_df(
     source_name: str,
     df: pd.DataFrame,
     weekly_room_order: list[str] | None = None,
-    class_column_width: int | float | None = None,
+    weekly_class_column_width: int | float | None = None,
+    sync_class_column_width: int | float | None = None,
 ) -> ScheduleGenerationResult:
     title_method_map = _build_title_method_map(df)
     course_annotation_map = _load_course_annotation_map()
@@ -141,7 +146,8 @@ def _generate_schedule_outputs_from_df(
         sync_special_rows,
         sync_term_summary_map,
         weekly_room_order,
-        class_column_width,
+        weekly_class_column_width,
+        sync_class_column_width,
     )
     pdf_bytes = _build_schedule_pdf(
         slots,
@@ -1101,7 +1107,8 @@ def _build_schedule_excel(
     sync_special_rows: dict[str, str],
     sync_term_summary_map: dict[str, str],
     weekly_room_order: list[str] | None = None,
-    class_column_width: int | float | None = None,
+    weekly_class_column_width: int | float | None = None,
+    sync_class_column_width: int | float | None = None,
 ) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -1116,7 +1123,7 @@ def _build_schedule_excel(
             term_summary_map,
             "Printable Weekly Schedule - In Person Classes",
             weekly_room_order,
-            class_column_width,
+            weekly_class_column_width,
         )
         _write_sync_schedule_sheet(
             writer,
@@ -1128,7 +1135,7 @@ def _build_schedule_excel(
             sync_special_rows,
             sync_term_summary_map,
             "Printable Weekly Schedule - Sync Classes",
-            class_column_width,
+            sync_class_column_width,
         )
         _write_async_schedule_sheet(
             writer,

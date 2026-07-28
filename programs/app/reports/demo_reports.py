@@ -7,6 +7,7 @@ from io import BytesIO
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from ..excel_utils import workbook_to_excel_bytes
 from ..models import ReportBundle, ReportResult
@@ -293,6 +294,13 @@ def _clone_sheet_into_workbook(source_ws, target_wb, title: str) -> None:
         target_ws.row_dimensions[key].hidden = dim.hidden
     target_ws.freeze_panes = source_ws.freeze_panes
     target_ws.sheet_view.showGridLines = source_ws.sheet_view.showGridLines
+
+
+def _set_schedule_class_column_widths(ws, width: float) -> None:
+    if ws.max_column < 2:
+        return
+    for column_index in range(2, ws.max_column + 1):
+        ws.column_dimensions[get_column_letter(column_index)].width = width
 
 
 def _build_contracts_overview_template(start_year: int | None) -> Workbook:
@@ -1609,12 +1617,17 @@ def generate_department_overview_bundle(
             source_name=f"{department}_department_admin",
             department=department,
             weekly_room_order=DEPARTMENT_ADMIN_WEEKLY_ROOMS,
-            class_column_width=DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
+            weekly_class_column_width=DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
+            sync_class_column_width=28,
         )
         schedule_workbook = load_workbook(BytesIO(schedule_report.excel_bytes))
         for sheet_name in ["Weekly Schedule", "SYNC Schedule", "ASYNC Classes"]:
             if sheet_name in schedule_workbook.sheetnames:
                 _clone_sheet_into_workbook(schedule_workbook[sheet_name], workbook, sheet_name)
+        if "Weekly Schedule" in workbook.sheetnames:
+            _set_schedule_class_column_widths(workbook["Weekly Schedule"], DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH)
+        if "SYNC Schedule" in workbook.sheetnames:
+            _set_schedule_class_column_widths(workbook["SYNC Schedule"], 28)
     combined_buffer = BytesIO()
     workbook.save(combined_buffer)
     preview_df = sheets["report_001a"]
