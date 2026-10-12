@@ -148,6 +148,11 @@ class ComparisonResult:
     compared_columns: int
 
 
+def department_output_filename(department: str) -> str:
+    """Return the download filename for a report limited to one DonSheet tab."""
+    return f"ColorReport_SEM_course_updates_{department}.xlsx"
+
+
 def _unique_headers(headers) -> list[str]:
     seen: dict[str, int] = {}
     result = []
@@ -280,13 +285,25 @@ def _record(frame: list[dict], row, kind: str, column: str, don_value=None, bann
     })
 
 
-def generate_banner_donsheet_comparison(donsheet_bytes: bytes, banner_bytes: bytes, banner_filename: str) -> ComparisonResult:
+def generate_banner_donsheet_comparison(
+    donsheet_bytes: bytes,
+    banner_bytes: bytes,
+    banner_filename: str,
+    department: str | None = None,
+) -> ComparisonResult:
+    """Build a full report, or one limited to a single DonSheet department tab."""
     working, sheet_names, _ = _load_donsheet(donsheet_bytes)
     banner = _load_banner(banner_bytes, banner_filename)
     if BASE_KEY not in working.columns:
         raise ValueError("The DonSheet must contain a CRN column.")
     working[BASE_KEY] = _normalize_key(working[BASE_KEY])
     working = working[working[BASE_KEY].notna()].copy()
+    if department is not None:
+        department = str(department).strip()
+        sheet_names = [name for name in sheet_names if name == department]
+        working = working[working["_SheetName"].eq(department)].copy()
+        if working.empty:
+            raise ValueError(f"The DonSheet does not contain usable course rows for department '{department}'.")
     # Banner exports include the entire university.  The notebook report limits
     # its comparison to the academic subjects represented in the DonSheet.
     if "Subject" in working.columns and "Subject" in banner.columns:

@@ -324,7 +324,10 @@ def build_canonical_dataframe(source: str | bytes | object) -> NormalizationResu
             df["Term Season"] = term_season
             df["Term Label"] = term_label
         else:
-            df["Term Year"] = pd.to_numeric(df.get("Calendar Year"), errors="coerce").astype("Int64")
+            calendar_year = df.get(
+                "Calendar Year", pd.Series(index=df.index, dtype="object")
+            )
+            df["Term Year"] = pd.to_numeric(calendar_year, errors="coerce").astype("Int64")
             df["Term Season"] = _string_series(df.get("Semester"), df.index)
             df["Term Label"] = _string_series(df.get("Semester"), df.index)
         missing_term_label = _string_series(df.get("Term Label"), df.index).isna()

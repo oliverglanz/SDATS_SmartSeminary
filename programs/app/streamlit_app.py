@@ -11,7 +11,13 @@ import streamlit.components.v1 as components
 
 from app.contracts_from_donsheet import cleanup_result, generate_contracts_from_uploads
 from app.contracts_from_sharisheet import generate_contracts_from_sharisheet_uploads
-from app.banner_donsheet_comparison import OUTPUT_FILENAME, generate_banner_donsheet_comparison
+from app.budget_readiness import analyze_budget_readiness
+from app.prefill_donsheet_from_banner import prefill_donsheet_from_banner
+from app.banner_donsheet_comparison import (
+    OUTPUT_FILENAME,
+    department_output_filename,
+    generate_banner_donsheet_comparison,
+)
 from app.config import (
     APP_TITLE,
     DEFAULT_DONSHEET_PATH,
@@ -34,12 +40,19 @@ AUTH_KEY_PREFIX = "smart_seminary_auth_"
 SHARI_CONTRACT_RESULT_KEY = "smart_seminary_shari_contract_result"
 SHARI_BUDGET_RESULT_KEY = "smart_seminary_shari_budget_result"
 DEPARTMENT_ADMIN_RESULT_KEY = "smart_seminary_department_admin_result"
+DEPARTMENT_ADMIN_READINESS_KEY = "smart_seminary_department_admin_readiness"
 BANNER_COMPARISON_RESULT_KEY = "smart_seminary_banner_comparison_result"
+KAREN_PREFILL_RESULT_KEY = "smart_seminary_karen_prefill_result"
+ENTIRE_SEMINARY_OPTION = "Entire Seminary"
 
 ACTION_CONTRACT_DONSHEET = "Create contract PDFs - based on DonSheet"
 ACTION_BUDGET_DONSHEET = "Create budget report workbook - based on DonSheet"
 ACTION_CONTRACT_SHARISHEET = "Create contract PDFs - based on ShariSheet"
 ACTION_BUDGET_SHARISHEET = "Create budget report workbook - based on ShariSheet"
+ACTION_KAREN_PREFILL = "PreFilling the DonSheet with Banner Data"
+ACTION_KAREN_SCHEDULE = "Create a printable SmartSchedule (Excel, PDF)"
+ACTION_DEPARTMENT_OVERVIEW = "Generate department overview reports"
+ACTION_DEPARTMENT_BUDGET_READINESS = "Budget Readiness (Is my DonSheet ready for Budget)"
 APP_VERSION_LABEL = f"version {datetime.now().strftime('%Y%m%d')}"
 
 
@@ -111,6 +124,10 @@ def _set_role(role: str) -> None:
 
 def _back_to_home() -> None:
     st.session_state.pop(ROLE_KEY, None)
+
+
+def _clear_banner_comparison_result() -> None:
+    st.session_state.pop(BANNER_COMPARISON_RESULT_KEY, None)
 
 
 def _is_authenticated(role: str) -> bool:
@@ -225,6 +242,48 @@ def _load_sharisheet_result(uploaded_files, use_folder: bool):
 
 def _render_department_admins() -> None:
     st.subheader("Department Admins")
+    action = st.radio(
+        "Choose an action",
+        options=[ACTION_DEPARTMENT_OVERVIEW, ACTION_DEPARTMENT_BUDGET_READINESS],
+        key="department_admin_action",
+    )
+
+    if action == ACTION_DEPARTMENT_BUDGET_READINESS:
+        st.write("Upload a DonSheet to check whether it is ready for budget reporting.")
+        uploaded_files = st.file_uploader(
+            "Upload DonSheet workbook",
+            type=["xlsx"],
+            accept_multiple_files=True,
+            key="department_admin_readiness_upload",
+        )
+        use_sample = st.checkbox(
+            "Use bundled default DonSheet when no file is uploaded",
+            value=True,
+            key="department_admin_readiness_sample",
+        )
+        if st.button("Check budget readiness", type="primary", key="department_admin_readiness_generate"):
+            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample)
+            if result is not None:
+                st.session_state[DEPARTMENT_ADMIN_READINESS_KEY] = {
+                    "source_names": source_names,
+                    "readiness": analyze_budget_readiness(result.canonical_df),
+                }
+
+        readiness_payload = st.session_state.get(DEPARTMENT_ADMIN_READINESS_KEY)
+        if readiness_payload is not None:
+            readiness = readiness_payload["readiness"]
+            if readiness.issues_df.empty:
+                st.success(f"No readiness issues found across {readiness.checked_rows} course row(s).")
+            else:
+                st.warning(
+                    f"Found {len(readiness.issues_df)} readiness issue(s) across {readiness.checked_rows} course row(s)."
+                )
+                st.dataframe(readiness.issues_df, use_container_width=True, hide_index=True)
+            if st.button("Clear readiness report", key="department_admin_readiness_clear"):
+                st.session_state.pop(DEPARTMENT_ADMIN_READINESS_KEY, None)
+                st.rerun()
+        return
+
     st.write("Choose a department, upload a DonSheet, and generate the department overview workbook.")
 
     selected_department = st.radio(
@@ -267,10 +326,56 @@ def _render_department_admins() -> None:
 
 def _render_karen() -> None:
     st.subheader("Karen")
-    st.write("Upload one DonSheet and create a printable SmartSchedule Excel file plus a PDF version.")
 
     if not _render_password_gate("Karen"):
         return
+
+    action = st.radio(
+        "Choose an action",
+        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE],
+        key="karen_action",
+    )
+    if action == ACTION_KAREN_PREFILL:
+        st.write("Upload a Banner Sheet to populate the latest formula-enabled DonSheet template.")
+        banner_file = st.file_uploader(
+            "Upload Banner Sheet",
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=False,
+            key="karen_prefill_banner_upload",
+        )
+        if st.button("Prefill DonSheet from Banner Data", type="primary", key="karen_prefill_generate"):
+            st.session_state.pop(KAREN_PREFILL_RESULT_KEY, None)
+            if banner_file is None:
+                st.error("Upload a Banner Sheet before prefilling the DonSheet.")
+            else:
+                with st.spinner("Populating the DonSheet template from Banner data..."):
+                    try:
+                        st.session_state[KAREN_PREFILL_RESULT_KEY] = prefill_donsheet_from_banner(
+                            banner_file.getvalue(), banner_file.name
+                        )
+                    except (KeyError, ValueError, FileNotFoundError) as error:
+                        st.error(str(error))
+
+        result = st.session_state.get(KAREN_PREFILL_RESULT_KEY)
+        if result is not None:
+            populated_rows = sum(result.rows_by_department.values())
+            st.success(
+                f"Prefilled {populated_rows} Banner row(s) using {result.template_filename}."
+            )
+            st.download_button(
+                "Download prefilled DonSheet",
+                data=result.excel_bytes,
+                file_name=result.output_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                key="karen_prefill_download",
+            )
+            if st.button("Clear prefilled DonSheet", key="karen_prefill_clear"):
+                st.session_state.pop(KAREN_PREFILL_RESULT_KEY, None)
+                st.rerun()
+        return
+
+    st.write("Upload one DonSheet and create a printable SmartSchedule Excel file plus a PDF version.")
 
     uploaded_file = st.file_uploader(
         "Upload DonSheet workbook",
@@ -482,7 +587,17 @@ def _render_shari() -> None:
 
 def _render_banner_donsheet_comparison() -> None:
     st.subheader("Banner-DonSheet Comparison")
-    st.write("Upload a Banner Sheet and a DonSheet to create a color-coded discrepancy report.")
+    st.write(
+        "Upload a Banner Sheet and a DonSheet to create a color-coded discrepancy report. "
+        "Choose Entire Seminary for the complete report, or choose one department for its report."
+    )
+    selected_scope = st.radio(
+        "Comparison report",
+        options=[ENTIRE_SEMINARY_OPTION, *DEPARTMENT_OPTIONS],
+        horizontal=True,
+        key="banner_comparison_department",
+        on_change=_clear_banner_comparison_result,
+    )
     banner_file = st.file_uploader(
         "Upload Banner Sheet",
         type=["xlsx", "xls", "csv"],
@@ -506,27 +621,43 @@ def _render_banner_donsheet_comparison() -> None:
                         donsheet_file.getvalue(),
                         banner_file.getvalue(),
                         banner_file.name,
+                        department=None if selected_scope == ENTIRE_SEMINARY_OPTION else selected_scope,
                     )
                 except (KeyError, ValueError) as error:
                     st.error(str(error))
                 else:
-                    st.session_state[BANNER_COMPARISON_RESULT_KEY] = result
+                    st.session_state[BANNER_COMPARISON_RESULT_KEY] = {
+                        "result": result,
+                        "scope": selected_scope,
+                    }
 
-    result = st.session_state.get(BANNER_COMPARISON_RESULT_KEY)
-    if result is not None:
+    comparison_payload = st.session_state.get(BANNER_COMPARISON_RESULT_KEY)
+    if comparison_payload is not None:
+        result = comparison_payload["result"]
+        scope = comparison_payload["scope"]
         st.success(
             f"Created the discrepancy report with {result.discrepancy_count} discrepancy item(s) across {result.compared_columns} comparable column(s)."
         )
-        st.download_button(
-            "Download discrepancy report",
-            data=result.excel_bytes,
-            file_name=OUTPUT_FILENAME,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            key="banner_comparison_download",
-        )
+        if scope == ENTIRE_SEMINARY_OPTION:
+            st.download_button(
+                "Download complete discrepancy report",
+                data=result.excel_bytes,
+                file_name=OUTPUT_FILENAME,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                key="banner_comparison_download_full",
+            )
+        else:
+            st.download_button(
+                f"Download {scope} discrepancy report",
+                data=result.excel_bytes,
+                file_name=department_output_filename(scope),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                key="banner_comparison_download_department",
+            )
         if st.button("Clear comparison result", key="banner_comparison_clear"):
-            st.session_state.pop(BANNER_COMPARISON_RESULT_KEY, None)
+            _clear_banner_comparison_result()
             st.rerun()
 
 

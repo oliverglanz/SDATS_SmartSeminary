@@ -15,7 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-IGNORE_SHEETS = {"DropDownMenu", "InstructorMap"}
+IGNORE_SHEETS = {"DropDownMenu", "InstructorMap", "_names_lookup", "_courses_lookup"}
 BLOCK_ORDER = [
     "Monday Morning",
     "Tuesday Morning",
@@ -200,8 +200,48 @@ def _filter_department(df: pd.DataFrame, department: str | None) -> pd.DataFrame
     return df.loc[mask].copy()
 
 
+def _course_lookup_key(subject: object, course_number: object) -> str:
+    number = _cell_text(course_number)
+    if number.endswith(".0"):
+        number = number[:-2]
+    return f"{_cell_text(subject)}{number}"
+
+
+def _catalog_title_lookup(workbook) -> dict[str, str]:
+    """Read Catalog Titles from the formula template's hidden course lookup sheet."""
+    if "_courses_lookup" not in workbook.sheetnames:
+        return {}
+
+    worksheet = workbook["_courses_lookup"]
+    headers = {
+        str(worksheet.cell(1, column).value).strip(): column
+        for column in range(1, worksheet.max_column + 1)
+        if worksheet.cell(1, column).value is not None
+    }
+    subject_column = headers.get("Subject")
+    course_number_column = headers.get("Course Number {Crse Num}")
+    title_column = headers.get("Catalog Title")
+    key_column = headers.get("Lookup Key")
+    if not subject_column or not course_number_column or not title_column:
+        return {}
+
+    titles: dict[str, str] = {}
+    for row_number in range(2, worksheet.max_row + 1):
+        key = _cell_text(worksheet.cell(row_number, key_column).value) if key_column else ""
+        if not key:
+            key = _course_lookup_key(
+                worksheet.cell(row_number, subject_column).value,
+                worksheet.cell(row_number, course_number_column).value,
+            )
+        title = _cell_text(worksheet.cell(row_number, title_column).value)
+        if key and title:
+            titles.setdefault(key, title)
+    return titles
+
+
 def _load_raw_donsheet(uploaded_bytes: bytes) -> pd.DataFrame:
     wb = load_workbook(BytesIO(uploaded_bytes), data_only=True)
+    catalog_titles = _catalog_title_lookup(wb)
     records: list[dict[str, object]] = []
     for sheet_name in wb.sheetnames:
         if sheet_name in IGNORE_SHEETS:
@@ -212,6 +252,13 @@ def _load_raw_donsheet(uploaded_bytes: bytes) -> pd.DataFrame:
             row = {headers[c - 1]: ws.cell(r, c).value for c in range(1, ws.max_column + 1)}
             if row.get("CRN") is None and row.get("Catalog Title") is None and row.get("Section Title") is None:
                 continue
+            if not _cell_text(row.get("Catalog Title")):
+                row["Catalog Title"] = catalog_titles.get(
+                    _course_lookup_key(
+                        row.get("Subject"), row.get("Course Number {Crse Num}"),
+                    ),
+                    row.get("Catalog Title"),
+                )
             row["_sheet"] = sheet_name
             records.append(row)
     return pd.DataFrame(records)
@@ -293,11 +340,11 @@ def _uniq(seq) -> list[str]:
 
 
 def _pick_title(row: pd.Series) -> str:
-    sec = _cell_text(row.get("Section Title"))
     cat = _cell_text(row.get("Catalog Title"))
-    if sec and sec.lower() not in {"none", cat.lower()} and sec != "0":
-        return sec
-    return cat
+    if cat and cat.lower() != "none" and cat != "0":
+        return cat
+    sec = _cell_text(row.get("Section Title"))
+    return sec if sec.lower() not in {"none", "0"} else ""
 
 
 def _normalize_room(room: object) -> str:

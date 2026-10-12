@@ -35,7 +35,7 @@ DEFAULT_SHARISHEET_DIR = Path(
 )
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs_app"
 
-HELPER_SHEETS = {"DropDownMenu", "InstructorMap"}
+HELPER_SHEETS = {"DropDownMenu", "InstructorMap", "_names_lookup", "_courses_lookup"}
 ROLE_PASSWORDS = {
     "Karen": os.getenv("SMART_SEMINARY_PASSWORD_KAREN", "neraK"),
     "Shari": os.getenv("SMART_SEMINARY_PASSWORD_SHARI", "irahS"),
