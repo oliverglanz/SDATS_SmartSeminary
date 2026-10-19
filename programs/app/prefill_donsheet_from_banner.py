@@ -8,6 +8,7 @@ import re
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.worksheet.protection import SheetProtection
 
 from app.banner_donsheet_comparison import BANNER_RENAMES, SITE_NAMES
 from app.config import PROJECT_ROOT
@@ -15,8 +16,21 @@ from app.config import PROJECT_ROOT
 
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "0_source_files" / "default_DonSheet"
 MAX_DATA_ROWS = 300
+EXCEL_DATE_FORMAT = "d-mmm-yy"
+DON_SHEET_DATE_COLUMNS = {
+    "Semester Start Date {Soaterm Start Date}",
+    "Pre-work Start Date {not in Banner}",
+    "Pre-work End Date {not in Banner}",
+    "Course Start Date {Meet Start Date}",
+    "Course End Date {Meet End Date}",
+    "Post-work Start Date {not in Banner}",
+    "Post-work End Date {not in Banner}",
+    "Semester End Date {Soaterm End Date}",
+}
 
-SOURCE_TO_TEMPLATE_HEADER = {
+# The current template uses the Banner column names directly.  These fallbacks
+# retain compatibility with older templates that used "Intensive Period".
+LEGACY_TEMPLATE_HEADER_FALLBACKS = {
     "Course Start Date {Meet Start Date}": "Intensive Period Start Date {Meet Start Date}",
     "Course End Date {Meet End Date}": "Intensive Period End Date {Meet End Date}",
 }
@@ -66,6 +80,10 @@ def _load_banner(data: bytes, filename: str) -> pd.DataFrame:
     if "Building {Meet Bldg}" in frame.columns:
         frame["Building {Meet Bldg}"] = frame["Building {Meet Bldg}"].replace(SITE_NAMES)
 
+    for column in DON_SHEET_DATE_COLUMNS.intersection(frame.columns):
+        parsed_dates = pd.to_datetime(frame[column], format="mixed", errors="coerce")
+        frame[column] = parsed_dates.where(parsed_dates.notna(), frame[column])
+
     frame["CRN"] = frame["CRN"].astype("string").str.strip()
     frame = frame[frame["CRN"].notna() & frame["CRN"].ne("")].copy()
     frame["CRN sorted {not in Banner}"] = (
@@ -96,9 +114,8 @@ def _filter_department_rows(banner: pd.DataFrame) -> dict[str, pd.DataFrame]:
         working = working[working[restriction_columns].isna().all(axis=1)].copy()
 
     main_campus = working["Campus {Ssasect Campus}"].isin(["0", "7"])
-    outside_dmin_range = (
-        working["Course Number {Crse Num}"].lt(700) | working["Course Number {Crse Num}"].gt(799)
-    )
+    is_dmin_course = working["Course Number {Crse Num}"].between(700, 799, inclusive="both")
+    outside_dmin_range = ~is_dmin_course
     standard_departments = ["CHIS", "DSLE", "GSEM", "MSSN", "NTST", "PATH", "THST"]
     routed = {
         department: working.loc[
@@ -110,15 +127,35 @@ def _filter_department_rows(banner: pd.DataFrame) -> dict[str, pd.DataFrame]:
         working["Subject"].isin(["OTST", "ANEA"]) & outside_dmin_range & main_campus
     ].copy()
     routed["MDivHISP_MAPmENGL_MAPmHISP"] = working.loc[
-        working["Campus {Ssasect Campus}"].eq("9OM")
+        working["Campus {Ssasect Campus}"].eq("9OM") & outside_dmin_range
     ].copy()
     routed["MA_Religion"] = working.loc[
-        working["Campus {Ssasect Campus}"].eq("ZOM")
+        working["Campus {Ssasect Campus}"].eq("ZOM") & outside_dmin_range
     ].copy()
-    routed["DMIN"] = working.loc[
-        working["Course Number {Crse Num}"].between(700, 799, inclusive="both")
-    ].copy()
-    return routed
+    routed["DMIN"] = working.loc[is_dmin_course].copy()
+    return {department: _sort_department_rows(rows) for department, rows in routed.items()}
+
+
+def _sort_department_rows(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Order imported rows consistently without changing the DonSheet columns."""
+    if dataframe.empty:
+        return dataframe
+
+    sortable = dataframe.copy()
+    sortable["_sort_subject"] = sortable["Subject"].astype("string").str.upper()
+    sortable["_sort_course_number"] = pd.to_numeric(
+        sortable["Course Number {Crse Num}"], errors="coerce"
+    )
+    sortable["_sort_course_section"] = pd.to_numeric(
+        sortable.get("Course Section {Seq Crse Num}"), errors="coerce"
+    )
+    sortable["_sort_crn"] = sortable["CRN sorted {not in Banner}"].astype("string")
+    return sortable.sort_values(
+        by=["_sort_subject", "_sort_course_number", "_sort_course_section", "_sort_crn"],
+        ascending=True,
+        kind="stable",
+        na_position="last",
+    ).drop(columns=["_sort_subject", "_sort_course_number", "_sort_course_section", "_sort_crn"])
 
 
 def _latest_formula_template() -> Path:
@@ -148,7 +185,11 @@ def _is_formula(cell) -> bool:
     return cell.data_type == "f" or (isinstance(cell.value, str) and cell.value.startswith("="))
 
 
-def prefill_donsheet_from_banner(banner_bytes: bytes, banner_filename: str) -> PrefilledDonSheetResult:
+def prefill_donsheet_from_banner(
+    banner_bytes: bytes,
+    banner_filename: str,
+    worksheet_password: str | None = None,
+) -> PrefilledDonSheetResult:
     """Populate the latest formula-enabled DonSheet template from one Banner export."""
     departments = _filter_department_rows(_load_banner(banner_bytes, banner_filename))
     template_path = _latest_formula_template()
@@ -171,20 +212,29 @@ def prefill_donsheet_from_banner(banner_bytes: bytes, banner_filename: str) -> P
                     cell.value = None
 
         for source_header in dataframe.columns:
-            target_header = SOURCE_TO_TEMPLATE_HEADER.get(source_header, source_header)
-            target_column = headers.get(target_header)
+            target_column = headers.get(source_header)
+            if target_column is None:
+                target_column = headers.get(LEGACY_TEMPLATE_HEADER_FALLBACKS.get(source_header, ""))
             if target_column is None:
                 continue
             for row_number, value in enumerate(dataframe[source_header], start=2):
                 destination = worksheet.cell(row=row_number, column=target_column)
                 if not _is_formula(destination):
                     destination.value = None if pd.isna(value) else value
+                    if source_header in DON_SHEET_DATE_COLUMNS:
+                        destination.number_format = EXCEL_DATE_FORMAT
 
     try:
         workbook.calculation.fullCalcOnLoad = True
         workbook.calculation.forceFullCalc = True
     except AttributeError:
         pass
+
+    for worksheet in workbook.worksheets:
+        worksheet.protection = SheetProtection()
+        if worksheet_password:
+            worksheet.protection.set_password(worksheet_password)
+            worksheet.protection.sheet = True
 
     stream = BytesIO()
     workbook.save(stream)

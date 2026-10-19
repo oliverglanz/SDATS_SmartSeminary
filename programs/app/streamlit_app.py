@@ -343,15 +343,31 @@ def _render_karen() -> None:
             accept_multiple_files=False,
             key="karen_prefill_banner_upload",
         )
+        protect_workbook = st.checkbox(
+            "Password-protect the prefilled DonSheet",
+            value=False,
+            key="karen_prefill_protect",
+        )
+        protection_password = ""
+        if protect_workbook:
+            protection_password = st.text_input(
+                "Workbook password",
+                type="password",
+                key="karen_prefill_password",
+            )
         if st.button("Prefill DonSheet from Banner Data", type="primary", key="karen_prefill_generate"):
             st.session_state.pop(KAREN_PREFILL_RESULT_KEY, None)
             if banner_file is None:
                 st.error("Upload a Banner Sheet before prefilling the DonSheet.")
+            elif protect_workbook and not protection_password:
+                st.error("Enter a password or turn off password protection.")
             else:
                 with st.spinner("Populating the DonSheet template from Banner data..."):
                     try:
                         st.session_state[KAREN_PREFILL_RESULT_KEY] = prefill_donsheet_from_banner(
-                            banner_file.getvalue(), banner_file.name
+                            banner_file.getvalue(),
+                            banner_file.name,
+                            worksheet_password=protection_password if protect_workbook else None,
                         )
                     except (KeyError, ValueError, FileNotFoundError) as error:
                         st.error(str(error))

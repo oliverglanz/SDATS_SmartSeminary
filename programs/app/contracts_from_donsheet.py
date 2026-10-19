@@ -177,8 +177,20 @@ def extract_single_contract_row(row: pd.Series, sheet_name: str, row_index: int)
 
     prework_start = _normalize_date_value(_value(row, "Pre-work Start Date {not in Banner}"))
     prework_end = _normalize_date_value(_value(row, "Pre-work End Date {not in Banner}"))
-    intensive_start = _normalize_date_value(_value(row, "Intensive Period Start Date {Meet Start Date}"))
-    intensive_end = _normalize_date_value(_value(row, "Intensive Period End Date {Meet End Date}"))
+    intensive_start = _normalize_date_value(
+        _coalesce(
+            row,
+            "Course Start Date {Meet Start Date}",
+            "Intensive Period Start Date {Meet Start Date}",
+        )
+    )
+    intensive_end = _normalize_date_value(
+        _coalesce(
+            row,
+            "Course End Date {Meet End Date}",
+            "Intensive Period End Date {Meet End Date}",
+        )
+    )
     postwork_start = _normalize_date_value(_value(row, "Post-work Start Date {not in Banner}"))
     postwork_end = _normalize_date_value(_value(row, "Post-work End Date {not in Banner}"))
     begin_date = _first_date(
