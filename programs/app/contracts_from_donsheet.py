@@ -226,6 +226,14 @@ def extract_single_contract_row(row: pd.Series, sheet_name: str, row_index: int)
         "International": _stringify(_value(row, "international")),
         "DeptContact": _stringify(_value(row, "Dept contact name")),
         "DeptContactID": _stringify(_value(row, "Dept contact ID#")),
+        # These are retained with each extracted course so downstream signing
+        # workflows can route the completed PDF without rereading the workbook.
+        # Older DonSheet versions did not include all of these columns, hence
+        # the empty-string fallback rather than treating them as required here.
+        "ChairEmail": _coalesce_text(row, "chair email", "Chair Email"),
+        "DeanEmail": _coalesce_text(row, "dean email", "Dean Email"),
+        "VPFinanceEmail": _coalesce_text(row, "VP finance email", "VP Finance Email"),
+        "HRemail": _coalesce_text(row, "HR email", "HR Email"),
         "DeanID": _stringify(_value(row, "dean ID#")),
         "VPFinanceID": _stringify(_value(row, "VP finance ID#")),
         "Reason": contract_reason,
