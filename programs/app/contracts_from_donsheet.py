@@ -239,10 +239,13 @@ def extract_single_contract_row(row: pd.Series, sheet_name: str, row_index: int)
         "Reason": contract_reason,
         "Semester": semester,
         "Year": year,
+        "Term Code": _stringify(_value(row, "Term Code")),
         "CourseRaw": f"{dept}{course_number}".strip(),
         "Dept": dept,
         "CourseNum": course_number,
         "CourseSection": course_section,
+        "Program": _stringify(_value(row, "Program {not in Banner}")),
+        "Building": _stringify(_value(row, "Building {Meet Bldg}")),
         "CourseTitle": _coalesce_text(row, "Catalog Title", "Section Title"),
         "Credits": credits,
         "Rate": rate,
@@ -462,8 +465,49 @@ def course_token(course: dict[str, object]) -> str:
     dept = _stringify(course.get("Dept"))
     number = _stringify(course.get("CourseNum"))
     section = _stringify(course.get("CourseSection"))
-    token = f"{dept}{number}".strip()
+    token = "-".join(part for part in (dept, number) if part)
     return f"{token}-{section}" if token and section else token
+
+
+def _instructor_filename_token(instructor: object) -> str:
+    """Return a Last.First token, e.g. Doe, Jane -> Doe.Jane."""
+    parts = [part.strip() for part in _stringify(instructor).split(",") if part.strip()]
+    if parts:
+        return ".".join(sanitize_filename(part) for part in parts)
+    return sanitize_filename(_stringify(instructor))
+
+
+def _term_filename_token(term_code: object, semester: object, year: object) -> str:
+    """Return a compact term label, e.g. 20264 or Fall 2026 -> FA26."""
+    code = _stringify(term_code)
+    match = re.fullmatch(r"(\d{4})(\d)", code)
+    if match:
+        prefix = {"2": "SP", "3": "SU", "4": "FA"}.get(match.group(2))
+        if prefix:
+            return f"{prefix}{match.group(1)[-2:]}"
+
+    prefix = {"spring": "SP", "summer": "SU", "fall": "FA"}.get(_stringify(semester).lower(), "TERM")
+    year_match = re.search(r"(\d{4})", _stringify(year))
+    return f"{prefix}{year_match.group(1)[-2:]}" if year_match else prefix
+
+
+def _location_filename_token(location: object) -> str:
+    """Use a bracketed location acronym when supplied, e.g. [OCPOL]."""
+    text = _stringify(location)
+    match = re.search(r"\[([^\[\]]+)\]", text)
+    return sanitize_filename(match.group(1)) if match else sanitize_filename(text)
+
+
+def contract_filename_stem(course: dict[str, object]) -> str:
+    """Build Instructor_CourseInfo_Program_Location_Date for one contract."""
+    instructor = _instructor_filename_token(course.get("Instructor"))
+    course_info = sanitize_filename(course_token(course))
+    program = sanitize_filename(_stringify(course.get("Program")))
+    location = _location_filename_token(_stringify(course.get("Building")) or _stringify(course.get("Location")))
+    term = sanitize_filename(
+        _term_filename_token(course.get("Term Code"), course.get("Semester"), course.get("Year"))
+    )
+    return "_".join((instructor, course_info, program, location, term))
 
 
 def has_intensive_period(course: dict[str, object]) -> bool:
@@ -821,6 +865,7 @@ def generate_contract_pdfs(
     if df_course.empty:
         return contracts
 
+    used_filenames: set[str] = set()
     for row_i, row in df_course.reset_index(drop=False).iterrows():
         course = row.to_dict()
         instructor = str(course.get("Instructor", "") or "")
@@ -830,13 +875,15 @@ def generate_contract_pdfs(
         template_path = paths.intensive_template if contract_type == "intensive" else paths.standard_template
 
         data = make_pdf_data_for_contract(instructor, semester, year, course)
-        last, first = split_name(instructor)
         token_str = course_token(course)
-        safe_name = f"{first}_{last}".replace(" ", "_")
-        base = f"{year}_{semester}_{contract_type}_{safe_name}_{token_str}"
-        unique_suffix = course.get("Source Row", row_i)
-        filename = f"{filename_prefix}{base}_row{unique_suffix}.pdf"
-        output_path = output_dir / sanitize_filename(filename)
+        base = contract_filename_stem(course)
+        filename = f"{base}.pdf"
+        suffix = 2
+        while filename in used_filenames or (output_dir / filename).exists():
+            filename = f"{base}_{suffix}.pdf"
+            suffix += 1
+        used_filenames.add(filename)
+        output_path = output_dir / filename
         fill_pdf_contract(template_path, output_path, data)
         contracts.append(
             GeneratedContract(

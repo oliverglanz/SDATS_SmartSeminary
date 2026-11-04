@@ -72,6 +72,10 @@ def _contract_rows_for_pdf(df: pd.DataFrame) -> pd.DataFrame:
     working["DeptContactID"] = _text_column(working, "Dept contact ID#")
     working["Reason"] = _combined_reason(working)
     working["Year"] = _text_column(working, "Semester").str.extract(r"(\d{4})$", expand=False).fillna("")
+    working["Term Code"] = _text_column(working, "Term Code")
+    working["Program"] = _text_column(working, "Program")
+    # ShariSheets provide Location rather than the DonSheet Building field.
+    working["Building"] = _text_column(working, "Location")
     working["CourseRaw"] = _text_column(working, "Course")
     working["Dept"] = _text_column(working, "Subject")
     missing_dept = working["Dept"].eq("")

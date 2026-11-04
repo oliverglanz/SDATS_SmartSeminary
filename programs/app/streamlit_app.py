@@ -12,6 +12,7 @@ import streamlit.components.v1 as components
 from app.contracts_from_donsheet import cleanup_result, generate_contracts_from_uploads
 from app.contracts_from_sharisheet import generate_contracts_from_sharisheet_uploads
 from app.budget_readiness import analyze_budget_readiness
+from app.donsheet_control import analyze_missing_donsheet_fields
 from app.prefill_donsheet_from_banner import prefill_donsheet_from_banner
 from app.banner_donsheet_comparison import (
     OUTPUT_FILENAME,
@@ -41,6 +42,7 @@ SHARI_CONTRACT_RESULT_KEY = "smart_seminary_shari_contract_result"
 SHARI_BUDGET_RESULT_KEY = "smart_seminary_shari_budget_result"
 DEPARTMENT_ADMIN_RESULT_KEY = "smart_seminary_department_admin_result"
 DEPARTMENT_ADMIN_READINESS_KEY = "smart_seminary_department_admin_readiness"
+DON_SHEET_CONTROL_RESULT_KEY = "smart_seminary_donsheet_control_result"
 BANNER_COMPARISON_RESULT_KEY = "smart_seminary_banner_comparison_result"
 KAREN_PREFILL_RESULT_KEY = "smart_seminary_karen_prefill_result"
 ENTIRE_SEMINARY_OPTION = "Entire Seminary"
@@ -53,6 +55,7 @@ ACTION_KAREN_PREFILL = "PreFilling the DonSheet with Banner Data"
 ACTION_KAREN_SCHEDULE = "Create a printable SmartSchedule (Excel, PDF)"
 ACTION_DEPARTMENT_OVERVIEW = "Generate department overview reports"
 ACTION_DEPARTMENT_BUDGET_READINESS = "Budget Readiness (Is my DonSheet ready for Budget)"
+ACTION_DONSHEET_CONTROL = "DonSheet Control (identifying missing fields)"
 APP_VERSION_LABEL = f"version {datetime.now().strftime('%Y%m%d')}"
 
 
@@ -220,6 +223,52 @@ def _load_result_for_current_role(uploaded_files, use_sample: bool):
     return result, source_names, payloads
 
 
+def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) -> None:
+    """Render the shared missing-field report for every DonSheet-facing role."""
+    state_key = f"{DON_SHEET_CONTROL_RESULT_KEY}_{key_prefix}"
+    st.write("Upload a DonSheet to identify every course field that still needs information.")
+    uploaded_files = st.file_uploader(
+        "Upload DonSheet workbook",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        key=f"{key_prefix}_donsheet_control_upload",
+    )
+    use_sample = st.checkbox(
+        "Use bundled default DonSheet when no file is uploaded",
+        value=use_sample_default,
+        key=f"{key_prefix}_donsheet_control_sample",
+    )
+    if st.button("Check DonSheet fields", type="primary", key=f"{key_prefix}_donsheet_control_generate"):
+        payloads = _donsheet_payloads(uploaded_files, use_sample)
+        if not payloads:
+            st.error("Upload a DonSheet workbook or enable the bundled DonSheet option.")
+        else:
+            with st.spinner("Checking DonSheet fields..."):
+                st.session_state[state_key] = analyze_missing_donsheet_fields(payloads)
+
+    report = st.session_state.get(state_key)
+    if report is None:
+        return
+    if report.issues_df.empty:
+        st.success(f"No missing fields found across {report.checked_courses} course row(s).")
+    else:
+        st.warning(
+            f"Found {len(report.issues_df)} missing field(s) across "
+            f"{report.checked_courses} course row(s) in {report.checked_sheets} worksheet(s)."
+        )
+        st.dataframe(report.issues_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download missing-fields report (.csv)",
+            data=report.issues_df.to_csv(index=False).encode("utf-8"),
+            file_name="DonSheet_missing_fields_report.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_donsheet_control_download",
+        )
+    if st.button("Clear DonSheet control report", key=f"{key_prefix}_donsheet_control_clear"):
+        st.session_state.pop(state_key, None)
+        st.rerun()
+
+
 def _sharisheet_payloads(uploaded_files, use_folder: bool) -> list[tuple[str, bytes]]:
     if uploaded_files:
         return [(file.name, file.getvalue()) for file in uploaded_files]
@@ -244,7 +293,7 @@ def _render_department_admins() -> None:
     st.subheader("Department Admins")
     action = st.radio(
         "Choose an action",
-        options=[ACTION_DEPARTMENT_OVERVIEW, ACTION_DEPARTMENT_BUDGET_READINESS],
+        options=[ACTION_DEPARTMENT_OVERVIEW, ACTION_DEPARTMENT_BUDGET_READINESS, ACTION_DONSHEET_CONTROL],
         key="department_admin_action",
     )
 
@@ -282,6 +331,10 @@ def _render_department_admins() -> None:
             if st.button("Clear readiness report", key="department_admin_readiness_clear"):
                 st.session_state.pop(DEPARTMENT_ADMIN_READINESS_KEY, None)
                 st.rerun()
+        return
+
+    if action == ACTION_DONSHEET_CONTROL:
+        _render_donsheet_control("department_admin", use_sample_default=True)
         return
 
     st.write("Choose a department, upload a DonSheet, and generate the department overview workbook.")
@@ -332,9 +385,13 @@ def _render_karen() -> None:
 
     action = st.radio(
         "Choose an action",
-        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE],
+        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE, ACTION_DONSHEET_CONTROL],
         key="karen_action",
     )
+    if action == ACTION_DONSHEET_CONTROL:
+        _render_donsheet_control("karen")
+        return
+
     if action == ACTION_KAREN_PREFILL:
         st.write("Upload a Banner Sheet to populate the latest formula-enabled DonSheet template.")
         banner_file = st.file_uploader(
@@ -456,9 +513,14 @@ def _render_shari() -> None:
             ACTION_BUDGET_DONSHEET,
             ACTION_CONTRACT_SHARISHEET,
             ACTION_BUDGET_SHARISHEET,
+            ACTION_DONSHEET_CONTROL,
         ],
         key="shari_action",
     )
+    if action == ACTION_DONSHEET_CONTROL:
+        _render_donsheet_control("shari", use_sample_default=True)
+        return
+
     is_sharisheet_action = action in {ACTION_CONTRACT_SHARISHEET, ACTION_BUDGET_SHARISHEET}
     uploaded_files = st.file_uploader(
         "Upload ShariSheet workbook(s)" if is_sharisheet_action else "Upload DonSheet workbook",
