@@ -27,9 +27,16 @@ from app.config import (
     DEPARTMENT_OPTIONS,
     ENABLE_CLOSE_BUTTON,
     ROLE_PASSWORDS,
+    SHARED_DONSHEET_LINKS_PATH,
 )
 from app.normalize import build_canonical_dataframe, combine_normalization_results
 from app.schedule_from_donsheet import generate_schedule_outputs
+from app.shared_donsheet_links import (
+    MAX_SHARED_DONSHEET_LINKS,
+    SharedDonSheetLinkError,
+    load_shared_donsheet_links,
+    save_shared_donsheet_links,
+)
 from app.sharisheet import normalize_sharisheet_uploads, sharisheet_payloads_from_directory
 from app.reports.demo_reports import (
     generate_budget_reports_bundle,
@@ -54,6 +61,7 @@ ACTION_CONTRACT_SHARISHEET = "Create contract PDFs - based on ShariSheet"
 ACTION_BUDGET_SHARISHEET = "Create budget report workbook - based on ShariSheet"
 ACTION_KAREN_PREFILL = "PreFilling the DonSheet with Banner Data"
 ACTION_KAREN_SCHEDULE = "Create a printable SmartSchedule (Excel, PDF)"
+ACTION_KAREN_SHARED_LINKS = "Manage shared DonSheet links"
 ACTION_DEPARTMENT_OVERVIEW = "Generate department overview reports"
 ACTION_DEPARTMENT_BUDGET_READINESS = "Budget Readiness (Is my DonSheet ready for Budget)"
 ACTION_DONSHEET_CONTROL = "DonSheet Control (identifying missing fields)"
@@ -124,6 +132,70 @@ def _public_donsheet_link_input(key: str) -> str:
             "Do not use this option for private or sensitive files."
         ),
     )
+
+
+def _load_shared_donsheet_links() -> list[dict[str, str]]:
+    try:
+        return load_shared_donsheet_links(Path(SHARED_DONSHEET_LINKS_PATH))
+    except SharedDonSheetLinkError as error:
+        st.error(str(error))
+        return []
+
+
+def _render_shared_donsheet_links() -> None:
+    links = _load_shared_donsheet_links()
+    if not links:
+        return
+    st.caption("Shared DonSheets")
+    columns = st.columns(min(3, len(links)))
+    for index, link in enumerate(links):
+        with columns[index % len(columns)]:
+            st.link_button(link["label"], link["url"], use_container_width=True)
+
+
+def _render_karen_shared_link_manager() -> None:
+    st.write(
+        "Save up to 15 SharePoint or OneDrive links. They remain available after app restarts "
+        "and appear as new-tab links in the other DonSheet sections."
+    )
+    links = _load_shared_donsheet_links()
+    choices: list[int | None] = [None, *range(len(links))]
+    selection = st.selectbox(
+        "Shared link",
+        options=choices,
+        format_func=lambda index: "Add a new link" if index is None else links[index]["label"],
+        key="karen_shared_link_selection",
+    )
+    is_new = selection is None
+    if is_new and len(links) >= MAX_SHARED_DONSHEET_LINKS:
+        st.info(f"The maximum of {MAX_SHARED_DONSHEET_LINKS} shared links has been reached. Edit or delete one to add another.")
+        return
+
+    selected = {"label": "", "url": ""} if is_new else links[selection]
+    with st.form("karen_shared_link_form"):
+        label = st.text_input("Link name", value=selected["label"], max_chars=100)
+        url = st.text_input("SharePoint or OneDrive link", value=selected["url"])
+        submitted = st.form_submit_button("Add link" if is_new else "Save link", type="primary")
+    if submitted:
+        updated = [*links]
+        record = {"label": label, "url": url}
+        if is_new:
+            updated.append(record)
+        else:
+            updated[selection] = record
+        try:
+            save_shared_donsheet_links(Path(SHARED_DONSHEET_LINKS_PATH), updated)
+        except SharedDonSheetLinkError as error:
+            st.error(str(error))
+        else:
+            st.success("Shared DonSheet link saved.")
+            st.rerun()
+
+    if not is_new and st.button("Delete selected link", key="karen_shared_link_delete"):
+        updated = [link for index, link in enumerate(links) if index != selection]
+        save_shared_donsheet_links(Path(SHARED_DONSHEET_LINKS_PATH), updated)
+        st.success("Shared DonSheet link deleted.")
+        st.rerun()
 
 
 def _build_result_from_payloads(payloads: list[tuple[str, bytes]]):
@@ -317,6 +389,7 @@ def _load_sharisheet_result(uploaded_files, use_folder: bool):
 
 def _render_department_admins() -> None:
     st.subheader("Department Admins")
+    _render_shared_donsheet_links()
     action = st.radio(
         "Choose an action",
         options=[ACTION_DEPARTMENT_OVERVIEW, ACTION_DEPARTMENT_BUDGET_READINESS, ACTION_DONSHEET_CONTROL],
@@ -413,9 +486,13 @@ def _render_karen() -> None:
 
     action = st.radio(
         "Choose an action",
-        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE, ACTION_DONSHEET_CONTROL],
+        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE, ACTION_DONSHEET_CONTROL, ACTION_KAREN_SHARED_LINKS],
         key="karen_action",
     )
+    if action == ACTION_KAREN_SHARED_LINKS:
+        _render_karen_shared_link_manager()
+        return
+
     if action == ACTION_DONSHEET_CONTROL:
         _render_donsheet_control("karen")
         return
@@ -536,6 +613,8 @@ def _render_shari() -> None:
 
     if not _render_password_gate("Shari"):
         return
+
+    _render_shared_donsheet_links()
 
     action = st.radio(
         "Output",
@@ -702,6 +781,7 @@ def _render_banner_donsheet_comparison() -> None:
         "Upload a Banner Sheet and a DonSheet to create a color-coded discrepancy report. "
         "Choose Entire Seminary for the complete report, or choose one department for its report."
     )
+    _render_shared_donsheet_links()
     selected_scope = st.radio(
         "Comparison report",
         options=[ENTIRE_SEMINARY_OPTION, *DEPARTMENT_OPTIONS],

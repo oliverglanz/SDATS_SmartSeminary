@@ -39,6 +39,7 @@ DEFAULT_SHARISHEET_DIR = Path(
     )
 )
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs_app"
+SHARED_DONSHEET_LINKS_PATH = PROJECT_ROOT / "0_source_files" / "shared_donsheet_links.json"
 
 HELPER_SHEETS = {"DropDownMenu", "InstructorMap", "_names_lookup", "_courses_lookup"}
 ROLE_PASSWORDS = {
