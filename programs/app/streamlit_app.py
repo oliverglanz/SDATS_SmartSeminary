@@ -14,6 +14,7 @@ from app.contracts_from_sharisheet import generate_contracts_from_sharisheet_upl
 from app.budget_readiness import analyze_budget_readiness
 from app.donsheet_control import analyze_missing_donsheet_fields
 from app.prefill_donsheet_from_banner import prefill_donsheet_from_banner
+from app.public_donsheet_link import PublicDonSheetLinkError, download_public_donsheet
 from app.banner_donsheet_comparison import (
     OUTPUT_FILENAME,
     department_output_filename,
@@ -101,12 +102,28 @@ def _credits_per_teacher_html_table(dataframe) -> str:
     )
 
 
-def _donsheet_payloads(uploaded_files, use_sample: bool) -> list[tuple[str, bytes]]:
+def _donsheet_payloads(uploaded_files, use_sample: bool, public_link: str = "") -> list[tuple[str, bytes]]:
     payloads = [(uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in (uploaded_files or [])]
+    if public_link.strip():
+        if payloads:
+            raise PublicDonSheetLinkError("Use either an uploaded DonSheet or one public Microsoft 365 link, not both.")
+        payloads.append(download_public_donsheet(public_link))
     if use_sample and not payloads:
         default_path = Path(DEFAULT_DONSHEET_PATH)
         payloads.append((default_path.name, default_path.read_bytes()))
     return payloads
+
+
+def _public_donsheet_link_input(key: str) -> str:
+    return st.text_input(
+        "Or paste a public SharePoint/OneDrive DonSheet link (temporary option)",
+        key=key,
+        placeholder="https://…sharepoint.com/…",
+        help=(
+            "Use only an 'Anyone with the link' workbook with download allowed. "
+            "Do not use this option for private or sensitive files."
+        ),
+    )
 
 
 def _build_result_from_payloads(payloads: list[tuple[str, bytes]]):
@@ -212,13 +229,17 @@ def _render_report_bundle(result, source_names: list[str], bundle) -> None:
         )
 
 
-def _load_result_for_current_role(uploaded_files, use_sample: bool):
-    if not uploaded_files and not use_sample:
+def _load_result_for_current_role(uploaded_files, use_sample: bool, public_link: str = ""):
+    if not uploaded_files and not use_sample and not public_link.strip():
         st.error("Upload a DonSheet workbook or enable the bundled DonSheet option.")
         return None, [], []
 
     with st.spinner("Normalizing DonSheet workbook..."):
-        payloads = _donsheet_payloads(uploaded_files, use_sample)
+        try:
+            payloads = _donsheet_payloads(uploaded_files, use_sample, public_link)
+        except PublicDonSheetLinkError as error:
+            st.error(str(error))
+            return None, [], []
         result, source_names = _build_result_from_payloads(payloads)
     return result, source_names, payloads
 
@@ -233,13 +254,18 @@ def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) 
         accept_multiple_files=True,
         key=f"{key_prefix}_donsheet_control_upload",
     )
+    public_link = _public_donsheet_link_input(f"{key_prefix}_donsheet_control_public_link")
     use_sample = st.checkbox(
         "Use bundled default DonSheet when no file is uploaded",
         value=use_sample_default,
         key=f"{key_prefix}_donsheet_control_sample",
     )
     if st.button("Check DonSheet fields", type="primary", key=f"{key_prefix}_donsheet_control_generate"):
-        payloads = _donsheet_payloads(uploaded_files, use_sample)
+        try:
+            payloads = _donsheet_payloads(uploaded_files, use_sample, public_link)
+        except PublicDonSheetLinkError as error:
+            st.error(str(error))
+            payloads = []
         if not payloads:
             st.error("Upload a DonSheet workbook or enable the bundled DonSheet option.")
         else:
@@ -305,13 +331,14 @@ def _render_department_admins() -> None:
             accept_multiple_files=True,
             key="department_admin_readiness_upload",
         )
+        public_link = _public_donsheet_link_input("department_admin_readiness_public_link")
         use_sample = st.checkbox(
             "Use bundled default DonSheet when no file is uploaded",
             value=True,
             key="department_admin_readiness_sample",
         )
         if st.button("Check budget readiness", type="primary", key="department_admin_readiness_generate"):
-            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample)
+            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample, public_link)
             if result is not None:
                 st.session_state[DEPARTMENT_ADMIN_READINESS_KEY] = {
                     "source_names": source_names,
@@ -350,6 +377,7 @@ def _render_department_admins() -> None:
         accept_multiple_files=True,
         key="department_admin_upload",
     )
+    public_link = _public_donsheet_link_input("department_admin_public_link")
     use_sample = st.checkbox(
         "Use bundled default DonSheet when no file is uploaded",
         value=True,
@@ -357,7 +385,7 @@ def _render_department_admins() -> None:
     )
 
     if st.button("Generate department overview reports", type="primary", key="department_admin_generate"):
-        result, source_names, donsheet_payloads = _load_result_for_current_role(uploaded_files, use_sample)
+        result, source_names, donsheet_payloads = _load_result_for_current_role(uploaded_files, use_sample, public_link)
         if result is None:
             return
         report = generate_department_overview_bundle(result.canonical_df, selected_department, donsheet_payloads)
@@ -456,6 +484,7 @@ def _render_karen() -> None:
         accept_multiple_files=False,
         key="karen_upload",
     )
+    public_link = _public_donsheet_link_input("karen_schedule_public_link")
     use_sample = st.checkbox(
         "Use bundled default DonSheet when no file is uploaded",
         value=False,
@@ -463,16 +492,18 @@ def _render_karen() -> None:
     )
 
     if st.button("Generate SmartSchedule file", type="primary", key="karen_generate"):
-        if not uploaded_file and not use_sample:
+        if not uploaded_file and not use_sample and not public_link.strip():
             st.error("Upload one DonSheet workbook or enable the bundled DonSheet option.")
             return
-        if uploaded_file:
-            source_name = uploaded_file.name
-            source_bytes = uploaded_file.getvalue()
-        else:
-            default_path = Path(DEFAULT_DONSHEET_PATH)
-            source_name = default_path.name
-            source_bytes = default_path.read_bytes()
+        try:
+            payloads = _donsheet_payloads([uploaded_file] if uploaded_file else [], use_sample, public_link)
+        except PublicDonSheetLinkError as error:
+            st.error(str(error))
+            return
+        if len(payloads) != 1:
+            st.error("Provide exactly one DonSheet workbook for the SmartSchedule.")
+            return
+        source_name, source_bytes = payloads[0]
         with st.spinner("Building SmartSchedule outputs..."):
             schedule_result = generate_schedule_outputs(source_name, source_bytes)
 
@@ -528,6 +559,7 @@ def _render_shari() -> None:
         accept_multiple_files=True,
         key="shari_upload",
     )
+    public_link = "" if is_sharisheet_action else _public_donsheet_link_input("shari_donsheet_public_link")
     if is_sharisheet_action:
         use_sample = st.checkbox(
             f"Use SmartBudgeting ShariSheets folder when no file is uploaded ({DEFAULT_SHARISHEET_DIR})",
@@ -555,13 +587,14 @@ def _render_shari() -> None:
                     )
                     return
             else:
-                if not uploaded_files and not use_sample:
+                if not uploaded_files and not use_sample and not public_link.strip():
                     st.error("Upload a DonSheet workbook or enable the bundled DonSheet option.")
                     return
-                upload_payloads = [(file.name, file.getvalue()) for file in uploaded_files]
-                if use_sample and not uploaded_files:
-                    default_path = Path(DEFAULT_DONSHEET_PATH)
-                    upload_payloads = [(default_path.name, default_path.read_bytes())]
+                try:
+                    upload_payloads = _donsheet_payloads(uploaded_files, use_sample, public_link)
+                except PublicDonSheetLinkError as error:
+                    st.error(str(error))
+                    return
             with st.spinner("Creating contract PDFs..."):
                 result = (
                     generate_contracts_from_sharisheet_uploads(upload_payloads)
@@ -638,7 +671,7 @@ def _render_shari() -> None:
             result, source_names = _load_sharisheet_result(uploaded_files, use_sample)
             source_label = "sharisheet"
         else:
-            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample)
+            result, source_names, _ = _load_result_for_current_role(uploaded_files, use_sample, public_link)
             source_label = "donsheet"
         if result is None:
             return
