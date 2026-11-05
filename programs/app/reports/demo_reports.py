@@ -192,15 +192,16 @@ def _course_text(working: pd.DataFrame) -> pd.Series:
     ).astype("string")
 
 
-def _semester_sort_key(value: object) -> tuple[int, int]:
+def _semester_sort_key(value: object) -> str:
+    """Return a scalar key so Arrow-backed pandas columns can be sorted safely."""
     text = _safe_text(value)
     if not text:
-        return (9999, 999)
+        return "9999999"
     parts = text.split()
     if len(parts) < 2 or not parts[-1].isdigit():
-        return (9999, 999)
+        return "9999999"
     season_order = {"summer": 0, "fall": 1, "spring": 2}
-    return (int(parts[-1]), season_order.get(parts[0].lower(), 999))
+    return f"{int(parts[-1]):04d}{season_order.get(parts[0].lower(), 999):03d}"
 
 
 def _ordered_semesters(series: pd.Series) -> list[str]:
