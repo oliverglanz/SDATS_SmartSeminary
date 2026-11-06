@@ -21,7 +21,7 @@ def _get_env_bool(name: str, default: bool) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-APP_TITLE = os.getenv("SMART_SEMINARY_APP_TITLE", "Smart Seminary Demo")
+APP_TITLE = os.getenv("SMART_SEMINARY_APP_TITLE", "Smart Seminary Portal")
 DEFAULT_PORT = _get_env_int("SMART_SEMINARY_PORT", 8501)
 ENABLE_CLOSE_BUTTON = _get_env_bool("SMART_SEMINARY_ENABLE_CLOSE_BUTTON", True)
 
