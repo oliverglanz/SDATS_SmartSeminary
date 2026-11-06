@@ -253,7 +253,10 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                     if source_header is not None and _text(row.get(source_header)) == "":
                         if (
                             source_header == LOAD_CONTRACT_HEADER
-                            and _load_contract_course_key(row) in assigned_load_contract_keys
+                            and (
+                                _faculty_credits_are_optional(row)
+                                or _load_contract_course_key(row) in assigned_load_contract_keys
+                            )
                         ):
                             continue
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
