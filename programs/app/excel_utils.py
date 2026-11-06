@@ -78,7 +78,7 @@ def _apply_sheet_style(ws, dataframe: pd.DataFrame, style_key: str) -> None:
     elif style_key == "report_001b":
         _style_sectioned_contract_report(ws, credits_header="Credits", rate_header="Rate", total_header="Total")
     elif style_key == "report_001c":
-        _style_sectioned_semester_report(ws, credits_header="Credits", rate_header="Rate", total_header="Total")
+        _style_sectioned_semester_report(ws, credits_header="Credits")
     elif style_key == "report_001f":
         _style_report_001f(ws)
     elif style_key == "report_002a":
@@ -168,6 +168,7 @@ def _style_flat_report(
 
 def _style_sectioned_contract_report(ws, credits_header: str, rate_header: str, total_header: str) -> None:
     _style_plain_header_row(ws, 1)
+    ws.freeze_panes = "A2"
     _format_named_column(ws, credits_header, "0.##")
     _format_named_column(ws, rate_header, '"$"#,##0.00')
     _format_named_column(ws, total_header, '"$"#,##0.00')
@@ -187,11 +188,10 @@ def _style_sectioned_contract_report(ws, credits_header: str, rate_header: str, 
     _autosize_columns(ws)
 
 
-def _style_sectioned_semester_report(ws, credits_header: str, rate_header: str, total_header: str) -> None:
+def _style_sectioned_semester_report(ws, credits_header: str) -> None:
     _style_plain_header_row(ws, 1)
+    ws.freeze_panes = "A2"
     _format_named_column(ws, credits_header, "0.##")
-    _format_named_column(ws, rate_header, '"$"#,##0.00')
-    _format_named_column(ws, total_header, '"$"#,##0.00')
     for row_idx in range(2, ws.max_row + 1):
         first = str(ws.cell(row_idx, 1).value or "").strip()
         rest_empty = all(ws.cell(row_idx, col).value in (None, "") for col in range(2, ws.max_column + 1))
@@ -287,6 +287,7 @@ def _style_report_009(ws) -> None:
 
 def _style_report_001f(ws) -> None:
     _style_plain_header_row(ws, 1)
+    ws.freeze_panes = "A2"
     current_faculty_start = None
     current_department_start = None
 

@@ -48,6 +48,14 @@ DEFAULT_DEPARTMENT_ORDER = [
     "THST",
 ]
 
+# Legacy Banner department codes that should roll up under the current SEM
+# department in all budget reports.
+SEM_DEPARTMENT_REPORT_ALIASES = {
+    "WMIS": "MSSN",
+    "THCP": "THST",
+    "DSPL": "DSLE",
+}
+
 
 def _copy_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df.copy() if df is not None else pd.DataFrame()
@@ -75,7 +83,7 @@ def _program_equals(series: pd.Series, program: str) -> pd.Series:
     return series.astype("string").fillna("").eq(str(program))
 
 
-def _prep_working_df(df: pd.DataFrame) -> pd.DataFrame:
+def _prep_working_df(df: pd.DataFrame, *, department_from_sem: bool = False) -> pd.DataFrame:
     working = _copy_frame(df)
     if working.empty:
         return working
@@ -99,13 +107,20 @@ def _prep_working_df(df: pd.DataFrame) -> pd.DataFrame:
     ]
     for column in text_columns:
         working[column] = _string_column(working, column)
+    sem_department_alias = working["SEM Department"].str.upper().map(SEM_DEPARTMENT_REPORT_ALIASES)
+    working["SEM Department"] = sem_department_alias.fillna(working["SEM Department"])
     working["load/contract"] = _string_column(working, "load/contract").str.lower().fillna("")
     working["Cr."] = _numeric_column(working, "Cr.").fillna(0)
     working["rate per credit"] = _numeric_column(working, "rate per credit").fillna(0)
     working["total contract amount"] = _numeric_column(working, "total contract amount").fillna(0)
     working["Fiscal Year"] = pd.to_numeric(working.get("Fiscal Year"), errors="coerce")
     working["Term Year"] = pd.to_numeric(working.get("Term Year"), errors="coerce")
-    working["Department"] = working["Department"].fillna(working["SEM Department"])
+    if department_from_sem:
+        # Budget reports are organized by the DonSheet's designated SEM department,
+        # rather than by the worksheet that happened to contain the course.
+        working["Department"] = working["SEM Department"]
+    else:
+        working["Department"] = working["Department"].fillna(working["SEM Department"])
     working["ORG code"] = working["account to be charged"].map(_org_code_from_account)
     working["Term Code Derived"] = working["Semester"].map(_term_code_from_semester)
     working["Course Number Text"] = _course_number_text(working)
@@ -736,7 +751,7 @@ def _overview_report_001b(working: pd.DataFrame) -> pd.DataFrame:
 
 
 def _overview_report_001c(working: pd.DataFrame) -> pd.DataFrame:
-    columns = ["Faculty", "Course", "Program", "LoadType", "Mode", "Location", "Credits", "Rate", "Total"]
+    columns = ["Faculty", "Course", "Program", "LoadType", "Mode", "Location", "Credits"]
     if working.empty:
         return pd.DataFrame(columns=columns)
 
@@ -758,32 +773,36 @@ def _overview_report_001c(working: pd.DataFrame) -> pd.DataFrame:
                         "Faculty": row["Faculty Name"],
                         "Course": row["Course Text"],
                         "Program": row["Program"],
-                        "LoadType": _safe_text(row["load/contract"]).title(),
+                        "LoadType": _report_001c_load_type(row["load/contract"]),
                         "Mode": row["Mode"],
                         "Location": row["Location"],
                         "Credits": row["Cr."],
-                        "Rate": row["rate per credit"] if _is_contract_value(row["load/contract"]) else 0,
-                        "Total": row["total contract amount"] if _is_contract_value(row["load/contract"]) else 0,
                     }
                 )
             lines.append(
                 {
                     "Faculty": f"Total {semester}",
                     "Credits": _safe_sum(semester_df["Cr."]),
-                    "Total": _safe_sum(semester_df["total contract amount"]),
                 }
             )
             lines.append(_blank_row(columns))
         lines.append(
             {
-                "Faculty": "Total contracts",
+                "Faculty": "Total credits",
                 "Credits": _safe_sum(dept_df["Cr."]),
-                "Total": _safe_sum(dept_df["total contract amount"]),
             }
         )
         lines.append(_blank_row(columns))
         lines.append(_blank_row(columns))
-    return _clean_numeric_display(pd.DataFrame(lines, columns=columns), ["Credits", "Rate", "Total"])
+    return _clean_numeric_display(pd.DataFrame(lines, columns=columns), ["Credits"])
+
+
+def _report_001c_load_type(value: object) -> str:
+    """Keep the two budget categories visible and consolidate all other labels."""
+    normalized = _safe_text(value).lower()
+    if normalized in {"load", "contract"}:
+        return normalized
+    return "Other (continuous/x-list/NA/etc.)"
 
 
 def _overview_report_001f(working: pd.DataFrame) -> pd.DataFrame:
@@ -824,7 +843,7 @@ def _overview_report_001f(working: pd.DataFrame) -> pd.DataFrame:
                     {
                         "Course": row["Course Text"],
                         "Program": row["Program"],
-                        "LoadType": _safe_text(row["load/contract"]).title(),
+                        "LoadType": _report_001c_load_type(row["load/contract"]),
                         "Mode": row["Mode"],
                         "Location": row["Location"],
                         "Credits": row["Cr."],
@@ -1768,7 +1787,7 @@ def _budget_report_master(working: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_budget_reports_bundle(df: pd.DataFrame, source_label: str = "donsheet") -> ReportBundle:
-    working = _prep_working_df(df)
+    working = _prep_working_df(df, department_from_sem=True)
     sheet_frames = {
         "report_000": _budget_report_master(working),
         "report_001a": _overview_report_001a(working),
@@ -1811,22 +1830,32 @@ def generate_budget_reports_bundle(df: pd.DataFrame, source_label: str = "donshe
     }
     reports: dict[str, ReportResult] = {}
     for key, frame in sheet_frames.items():
+        worksheet_name = "Master Data" if key == "report_000" else key
         reports[key] = ReportResult(
             report_name=report_titles[key],
             preview_df=frame,
-            excel_bytes=workbook_to_excel_bytes({key: frame}, style_plan={key: key}),
+            excel_bytes=workbook_to_excel_bytes({worksheet_name: frame}, style_plan={worksheet_name: key}),
             output_filename=f"{key}_from_{source_label}.xlsx",
-            worksheet_name=key,
+            worksheet_name=worksheet_name,
             metadata={"rows": str(len(frame))},
         )
 
-    combined_frames = {**sheet_frames, "report_999": _budget_report_master(working)}
+    combined_frames = {
+        "Master Data": sheet_frames["report_000"],
+        **{key: frame for key, frame in sheet_frames.items() if key != "report_000"},
+        "report_999": _budget_report_master(working),
+    }
+    combined_style_plan = {
+        "Master Data": "report_000",
+        **{key: key for key in combined_frames if key not in {"Master Data", "report_999"}},
+        "report_999": "report_999",
+    }
     return ReportBundle(
         bundle_name="Budget Reports",
         reports=reports,
         combined_workbook_bytes=workbook_to_excel_bytes(
             combined_frames,
-            style_plan={key: key for key in combined_frames},
+            style_plan=combined_style_plan,
         ),
         combined_output_filename=f"report_999_budget_reports_from_{source_label}.xlsx",
         preview_report_key="report_001a",

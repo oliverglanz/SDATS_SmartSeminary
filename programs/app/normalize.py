@@ -25,7 +25,11 @@ COLUMN_MAP = {
     "costs per credit {not in Banner}": "rate per credit",
     "total costs {not in Banner}": "total contract amount",
     "account to be charged {not in Banner}": "account to be charged",
-    "Credits {Sect Crs}": "Cr.",
+    # Budget reports use the faculty assignment, not Banner's section/catalog
+    # credit value.  Keep the Banner value separately for workflows that need it.
+    "Faculty Load / Contract Credits {not in Banner}": "Cr.",
+    "Credits {Sect Crs}": "Section Credits",
+    "Semester Start Date {Soaterm Start Date}": "Semester Start Date",
     "Pre-work Start Date {not in Banner}": "pre-work period start",
     "Pre-work End Date {not in Banner}": "pre-work period end",
     "Course Start Date {Meet Start Date}": "Begin Date",
@@ -47,13 +51,6 @@ MODE_MAP = {
     "BLENDED": "Blended",
     "WEB": "Web",
 }
-
-TERM_SEASON_MAP = {
-    "2": "Spring",
-    "3": "Summer",
-    "4": "Fall",
-}
-
 
 def _clean_object_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -78,15 +75,6 @@ def _normalize_mode(value: object) -> str | pd.NA:
 
 def _parse_donsheet_dates(values: pd.Series) -> pd.Series:
     return pd.to_datetime(values, format="%d-%b-%y", errors="coerce")
-
-
-def _parse_term_code(values: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-    text = values.astype("string").str.strip()
-    year = pd.to_numeric(text.str.slice(0, 4), errors="coerce").astype("Int64")
-    season_code = text.str.slice(4, 5)
-    season = season_code.map(TERM_SEASON_MAP).astype("string")
-    label = season.where(year.isna(), season + " " + year.astype("string"))
-    return year, season, label
 
 
 def _numeric_string(values: pd.Series) -> pd.Series:
@@ -180,27 +168,6 @@ def _parse_donsheet_dates_flexible(values: pd.Series) -> pd.Series:
     return parsed.fillna(pd.to_datetime(values, errors="coerce"))
 
 
-def _derive_semester_label(raw_semester: object, begin_date: pd.Series, calendar_year: pd.Series | None = None) -> pd.Series:
-    cleaned = pd.Series(raw_semester, copy=True)
-    cleaned = cleaned.astype("string").str.strip()
-    missing = cleaned.isna() | cleaned.eq("")
-
-    if missing.any():
-        months = pd.to_datetime(begin_date, errors="coerce").dt.month
-        derived = pd.Series(pd.NA, index=cleaned.index, dtype="string")
-        derived = derived.mask(months.isin([1, 2, 3, 4]), "Spring")
-        derived = derived.mask(months.isin([5, 6, 7]), "Summer")
-        derived = derived.mask(months.isin([8, 9, 10, 11, 12]), "Fall")
-        cleaned = cleaned.mask(missing, derived)
-
-    year = pd.to_datetime(begin_date, errors="coerce").dt.year.astype("Int64")
-    if calendar_year is not None:
-        fallback_year = pd.to_numeric(calendar_year, errors="coerce").astype("Int64")
-        year = fallback_year.where(cleaned.notna() & cleaned.ne(""), year.fillna(fallback_year))
-    with_year = cleaned.where(year.isna(), cleaned + " " + year.astype("Int64").astype("string"))
-    return with_year
-
-
 def _derive_fiscal_year(begin_date: pd.Series, calendar_year: pd.Series | None = None) -> pd.Series:
     dates = pd.to_datetime(begin_date, errors="coerce")
     years = dates.dt.year
@@ -209,6 +176,18 @@ def _derive_fiscal_year(begin_date: pd.Series, calendar_year: pd.Series | None =
         fallback = pd.to_numeric(calendar_year, errors="coerce").astype("Int64")
         fiscal_year = fallback.fillna(fiscal_year)
     return fiscal_year.astype("Int64")
+
+
+def _derive_semester_from_start_date(values: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Derive reporting year and semester solely from the semester start date."""
+    dates = _parse_donsheet_dates_flexible(values)
+    season = pd.Series(pd.NA, index=dates.index, dtype="string")
+    season = season.mask(dates.dt.month.eq(1), "Spring")
+    season = season.mask(dates.dt.month.eq(5), "Summer")
+    season = season.mask(dates.dt.month.eq(8), "Fall")
+    year = dates.dt.year.astype("Int64")
+    label = season.where(year.isna(), season + " " + year.astype("string"))
+    return season, year, label
 
 
 def _build_course_code(df: pd.DataFrame) -> pd.Series:
@@ -305,33 +284,22 @@ def build_canonical_dataframe(source: str | bytes | object) -> NormalizationResu
             df.get("total contract amount", pd.Series(index=df.index)),
             errors="coerce",
         )
+        df["Semester Start Date"] = _parse_donsheet_dates_flexible(
+            df.get("Semester Start Date", pd.Series(index=df.index))
+        )
         df["Begin Date"] = _parse_donsheet_dates_flexible(df.get("Begin Date", pd.Series(index=df.index)))
         df["End Date"] = _parse_donsheet_dates_flexible(df.get("End Date", pd.Series(index=df.index)))
-        df["Semester"] = _derive_semester_label(
-            df.get("Semester", pd.Series(index=df.index)),
-            df["Begin Date"],
-            df.get("Calendar Year"),
-        )
-        df["Fiscal Year"] = _derive_fiscal_year(df["Begin Date"], df.get("Calendar Year"))
+        semester_season, semester_year, semester_label = _derive_semester_from_start_date(df["Semester Start Date"])
+        df["Semester"] = semester_label
+        df["Fiscal Year"] = _derive_fiscal_year(df["Semester Start Date"])
         df["Course"] = _build_course_code(df)
         df["Location"] = _string_series(df.get("Location"), df.index).fillna(
             _string_series(df.get("Campus Code"), df.index)
         )
         df["Location"] = df["Location"].fillna(_string_series(df.get("Campus Restriction {Camp Restr CC}"), df.index))
-        if "Term Code" in df.columns:
-            term_year, term_season, term_label = _parse_term_code(df["Term Code"])
-            df["Term Year"] = term_year
-            df["Term Season"] = term_season
-            df["Term Label"] = term_label
-        else:
-            calendar_year = df.get(
-                "Calendar Year", pd.Series(index=df.index, dtype="object")
-            )
-            df["Term Year"] = pd.to_numeric(calendar_year, errors="coerce").astype("Int64")
-            df["Term Season"] = _string_series(df.get("Semester"), df.index)
-            df["Term Label"] = _string_series(df.get("Semester"), df.index)
-        missing_term_label = _string_series(df.get("Term Label"), df.index).isna()
-        df.loc[missing_term_label, "Term Label"] = _string_series(df.get("Semester"), df.index)
+        df["Term Year"] = semester_year
+        df["Term Season"] = semester_season
+        df["Term Label"] = semester_label
 
         df = _fill_instructor_details(df, instructor_map)
 

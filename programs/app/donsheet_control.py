@@ -16,7 +16,6 @@ REQUIRED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Program {not in Banner}", ("Program {not in Banner}",)),
     ("Campus {Ssasect Campus}", ("Campus {Ssasect Campus}",)),
     ("Instruction Method {Inst Method}", ("Instruction Method {Inst Method}",)),
-    ("Faculty Load / Contract Credits {not in Banner}", ("Faculty Load / Contract Credits {not in Banner}",)),
     ("Enrollment Cap {Max Enrl}", ("Enrollment Cap {Max Enrl}",)),
     ("Meeting Type", ("Meeting Type",)),
     ("Semester Start Date {Soaterm Start Date}", ("Semester Start Date {Soaterm Start Date}",)),
@@ -37,6 +36,9 @@ REQUIRED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 IDENTITY_HEADERS = ("Subject", "Course Number {Crse Num}", "Course Section {Seq Crse Num}", "CRN")
+FACULTY_CREDITS_HEADER = "Faculty Load / Contract Credits {not in Banner}"
+LOAD_CONTRACT_HEADER = "load/contract {not in Banner}"
+FACULTY_CREDITS_ALLOWED_LOAD_TYPES = {"load", "contract"}
 ISSUE_COLUMNS = [
     "Source File",
     "Source Sheet",
@@ -45,7 +47,7 @@ ISSUE_COLUMNS = [
     "Course Number",
     "Catalog Title",
     "Teacher",
-    "Missing Field",
+    "Missing/Wrong Field",
 ]
 
 
@@ -77,7 +79,7 @@ def _issue_base(source_name: str, sheet_name: str, row_number: int | str, row: p
 
 
 def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonSheetControlResult:
-    """Report one record for every required field that is blank on a course row."""
+    """Report blank required fields and invalid faculty-credit values on course rows."""
     issues: list[dict[str, object]] = []
     checked_courses = 0
     checked_sheets = 0
@@ -99,8 +101,12 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
             for label, aliases in REQUIRED_FIELDS:
                 if not any(alias in headers for alias in aliases):
                     issue = _issue_base(source_name, sheet_name, "")
-                    issue["Missing Field"] = f"Required column is missing: {label}"
+                    issue["Missing/Wrong Field"] = f"Required column is missing: {label}"
                     issues.append(issue)
+            if FACULTY_CREDITS_HEADER not in headers:
+                issue = _issue_base(source_name, sheet_name, "")
+                issue["Missing/Wrong Field"] = f"Required column is missing: {FACULTY_CREDITS_HEADER}"
+                issues.append(issue)
 
             identity_columns = [header for header in IDENTITY_HEADERS if header in headers]
             if not identity_columns:
@@ -112,8 +118,26 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                     source_header = next((alias for alias in aliases if alias in headers), None)
                     if source_header is not None and _text(row.get(source_header)) == "":
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
-                        issue["Missing Field"] = f"{column_letters[source_header]}_{source_header}"
+                        issue["Missing/Wrong Field"] = f"{column_letters[source_header]}_{source_header}"
                         issues.append(issue)
+
+                faculty_credits = row.get(FACULTY_CREDITS_HEADER)
+                load_contract = _text(row.get(LOAD_CONTRACT_HEADER)).lower()
+                if FACULTY_CREDITS_HEADER not in headers:
+                    continue
+                faculty_field = f"{column_letters[FACULTY_CREDITS_HEADER]}_{FACULTY_CREDITS_HEADER}"
+                if load_contract in FACULTY_CREDITS_ALLOWED_LOAD_TYPES:
+                    if _text(faculty_credits) == "":
+                        issue = _issue_base(source_name, sheet_name, index + 2, row)
+                        issue["Missing/Wrong Field"] = faculty_field
+                        issues.append(issue)
+                elif _text(faculty_credits) != "":
+                    issue = _issue_base(source_name, sheet_name, index + 2, row)
+                    issue["Missing/Wrong Field"] = (
+                        f"{faculty_field} must be empty when "
+                        f"{column_letters.get(LOAD_CONTRACT_HEADER, '?')}_{LOAD_CONTRACT_HEADER} is '{load_contract or 'blank'}'"
+                    )
+                    issues.append(issue)
 
     return DonSheetControlResult(
         issues_df=pd.DataFrame(issues, columns=ISSUE_COLUMNS),

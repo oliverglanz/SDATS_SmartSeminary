@@ -64,7 +64,7 @@ ACTION_KAREN_SCHEDULE = "Create a printable SmartSchedule (Excel, PDF)"
 ACTION_KAREN_SHARED_LINKS = "Manage shared DonSheet links"
 ACTION_DEPARTMENT_OVERVIEW = "Generate department overview reports"
 ACTION_DEPARTMENT_BUDGET_READINESS = "Budget Readiness (Is my DonSheet ready for Budget)"
-ACTION_DONSHEET_CONTROL = "DonSheet Control (identifying missing fields)"
+ACTION_DONSHEET_CONTROL = "DonSheet Control (identifying missing/wrong fields)"
 APP_VERSION_LABEL = f"version {datetime.now().strftime('%Y%m%d')}"
 
 
@@ -319,7 +319,7 @@ def _load_result_for_current_role(uploaded_files, use_sample: bool, public_link:
 def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) -> None:
     """Render the shared missing-field report for every DonSheet-facing role."""
     state_key = f"{DON_SHEET_CONTROL_RESULT_KEY}_{key_prefix}"
-    st.write("Upload a DonSheet to identify every course field that still needs information.")
+    st.write("Upload a DonSheet to identify every course field that is missing or inconsistent.")
     uploaded_files = st.file_uploader(
         "Upload DonSheet workbook",
         type=["xlsx"],
@@ -348,17 +348,17 @@ def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) 
     if report is None:
         return
     if report.issues_df.empty:
-        st.success(f"No missing fields found across {report.checked_courses} course row(s).")
+        st.success(f"No missing or wrong fields found across {report.checked_courses} course row(s).")
     else:
         st.warning(
-            f"Found {len(report.issues_df)} missing field(s) across "
+            f"Found {len(report.issues_df)} missing or wrong field issue(s) across "
             f"{report.checked_courses} course row(s) in {report.checked_sheets} worksheet(s)."
         )
         st.dataframe(report.issues_df, use_container_width=True, hide_index=True)
         st.download_button(
-            "Download missing-fields report (.csv)",
+            "Download missing/wrong-fields report (.csv)",
             data=report.issues_df.to_csv(index=False).encode("utf-8"),
-            file_name="DonSheet_missing_fields_report.csv",
+            file_name="DonSheet_missing_wrong_fields_report.csv",
             mime="text/csv",
             key=f"{key_prefix}_donsheet_control_download",
         )
