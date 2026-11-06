@@ -498,6 +498,8 @@ def _render_karen() -> None:
     if not _render_password_gate("Karen"):
         return
 
+    _render_shared_donsheet_links()
+
     action = st.radio(
         "Choose an action",
         options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE, ACTION_DONSHEET_CONTROL, ACTION_KAREN_SHARED_LINKS],

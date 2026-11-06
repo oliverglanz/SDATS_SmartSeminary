@@ -788,7 +788,7 @@ def _overview_report_001c(working: pd.DataFrame) -> pd.DataFrame:
             lines.append(_blank_row(columns))
         lines.append(
             {
-                "Faculty": "Total credits",
+                "Faculty": f"{department} Total Credits",
                 "Credits": _safe_sum(dept_df["Cr."]),
             }
         )
@@ -1170,13 +1170,23 @@ def _budget_report_004a(working: pd.DataFrame) -> pd.DataFrame:
         lines.append(total_line)
         lines.append(_blank_row(columns))
         lines.append(_blank_row(columns))
+    grand_total = {"Department": "GRAND TOTAL", "Faculty Name": pd.NA}
+    for program in programs:
+        grand_total[program] = _safe_sum(working.loc[working["Program"].eq(program), "Cr."])
+    grand_total["Total"] = sum(grand_total[program] for program in programs)
+    lines.append(grand_total)
     out = _clean_numeric_display(pd.DataFrame(lines, columns=columns), [*programs, "Total"])
     return _blank_zeroes(out, [*programs, "Total"])
 
 
 def _budget_report_004b(working: pd.DataFrame) -> pd.DataFrame:
     programs = _program_columns(working)
-    columns = ["Department", "Faculty Name", "Total Load per person", *programs]
+    total_credit_columns = [
+        "Total credits per person",
+        "Total Load-Credits per person",
+        "Total Contract-Credits per person",
+    ]
+    columns = ["Department", "Faculty Name", *total_credit_columns, *programs]
     if working.empty:
         return pd.DataFrame(columns=columns)
 
@@ -1184,28 +1194,60 @@ def _budget_report_004b(working: pd.DataFrame) -> pd.DataFrame:
     for department in _department_order(working):
         dept_df = working.loc[working["Department"].eq(department)].copy()
         load_df = dept_df.loc[dept_df["load/contract"].eq("load")].copy()
-        faculty_matrix = _faculty_program_matrix(load_df, "Cr.", programs, include_total=False)
-        faculty_matrix["Total Load per person"] = faculty_matrix[programs].sum(axis=1) if not faculty_matrix.empty else pd.Series(dtype="float64")
-        for _, row in faculty_matrix.sort_values("Faculty Name", na_position="last").iterrows():
-            line = {"Department": department, "Faculty Name": row["Faculty Name"], "Total Load per person": row["Total Load per person"]}
+        contract_df = dept_df.loc[dept_df["load/contract"].eq("contract")].copy()
+        credit_df = pd.concat([load_df, contract_df], ignore_index=True)
+        faculty_names = sorted(_string_column(credit_df, "Faculty Name").dropna().unique().tolist())
+
+        for faculty_name in faculty_names:
+            faculty_load_df = load_df.loc[load_df["Faculty Name"].eq(faculty_name)]
+            faculty_contract_df = contract_df.loc[contract_df["Faculty Name"].eq(faculty_name)]
+            load_credits = _safe_sum(faculty_load_df["Cr."])
+            contract_credits = _safe_sum(faculty_contract_df["Cr."])
+            line = {
+                "Department": department,
+                "Faculty Name": faculty_name,
+                "Total credits per person": load_credits + contract_credits,
+                "Total Load-Credits per person": load_credits,
+                "Total Contract-Credits per person": contract_credits,
+            }
             for program in programs:
-                line[program] = row[program]
+                line[program] = _safe_sum(faculty_load_df.loc[faculty_load_df["Program"].eq(program), "Cr."])
             lines.append(line)
 
-        def _summary_row(label: str, subset: pd.DataFrame, total_col: str) -> dict[str, object]:
-            line = {"Department": department, "Faculty Name": label, "Total Load per person": _safe_sum(subset[total_col])}
+        def _summary_row(label: str, subset: pd.DataFrame, load_credits: float, contract_credits: float) -> dict[str, object]:
+            line = {
+                "Department": department,
+                "Faculty Name": label,
+                "Total credits per person": load_credits + contract_credits,
+                "Total Load-Credits per person": load_credits,
+                "Total Contract-Credits per person": contract_credits,
+            }
             for program in programs:
-                line[program] = _safe_sum(subset.loc[subset["Program"].eq(program), total_col])
+                line[program] = _safe_sum(subset.loc[subset["Program"].eq(program), "Cr."])
             return line
 
-        lines.append(_summary_row("DEPARTMENT TOTAL Load Credits", load_df, "Cr."))
-        contract_df = dept_df.loc[dept_df["load/contract"].eq("contract")].copy()
-        lines.append(_summary_row("DEPARTMENT TOTAL Contract Credits", contract_df, "Cr."))
-        lines.append(_summary_row("DEPARTMENT TOTAL Contract+Load Credits", dept_df, "Cr."))
+        load_total = _safe_sum(load_df["Cr."])
+        contract_total = _safe_sum(contract_df["Cr."])
+        lines.append(_summary_row("DEPARTMENT TOTAL Load Credits", load_df, load_total, 0))
+        lines.append(_summary_row("DEPARTMENT TOTAL Contract Credits", contract_df, 0, contract_total))
+        lines.append(_summary_row("DEPARTMENT TOTAL Contract+Load Credits", credit_df, load_total, contract_total))
         lines.append(_blank_row(columns))
         lines.append(_blank_row(columns))
-    out = _clean_numeric_display(pd.DataFrame(lines, columns=columns), ["Total Load per person", *programs])
-    return _blank_zeroes(out, ["Total Load per person", *programs])
+    all_load_df = working.loc[working["load/contract"].eq("load")]
+    all_contract_df = working.loc[working["load/contract"].eq("contract")]
+    all_credit_df = pd.concat([all_load_df, all_contract_df], ignore_index=True)
+    grand_total = {
+        "Department": "GRAND TOTAL",
+        "Faculty Name": pd.NA,
+        "Total credits per person": _safe_sum(all_credit_df["Cr."]),
+        "Total Load-Credits per person": _safe_sum(all_load_df["Cr."]),
+        "Total Contract-Credits per person": _safe_sum(all_contract_df["Cr."]),
+    }
+    for program in programs:
+        grand_total[program] = _safe_sum(all_credit_df.loc[all_credit_df["Program"].eq(program), "Cr."])
+    lines.append(grand_total)
+    out = _clean_numeric_display(pd.DataFrame(lines, columns=columns), [*total_credit_columns, *programs])
+    return _blank_zeroes(out, [*total_credit_columns, *programs])
 
 
 def _budget_report_005(working: pd.DataFrame) -> pd.DataFrame:
