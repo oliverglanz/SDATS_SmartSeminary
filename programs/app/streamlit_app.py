@@ -14,6 +14,7 @@ from app.contracts_from_donsheet import cleanup_result, generate_contracts_from_
 from app.contracts_from_sharisheet import generate_contracts_from_sharisheet_uploads
 from app.budget_readiness import analyze_budget_readiness
 from app.donsheet_control import analyze_missing_donsheet_fields
+from app.excel_utils import dataframe_to_excel_bytes
 from app.prefill_donsheet_from_banner import prefill_donsheet_from_banner
 from app.public_donsheet_link import PublicDonSheetLinkError, download_public_donsheet
 from app.banner_donsheet_comparison import (
@@ -367,6 +368,13 @@ def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) 
             file_name="DonSheet_missing_wrong_fields_report.csv",
             mime="text/csv",
             key=f"{key_prefix}_donsheet_control_download",
+        )
+        st.download_button(
+            "Download missing/wrong-fields report (.xlsx)",
+            data=dataframe_to_excel_bytes(report.issues_df, "Missing Wrong Fields"),
+            file_name="DonSheet_missing_wrong_fields_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key_prefix}_donsheet_control_download_xlsx",
         )
     if st.button("Clear DonSheet control report", key=f"{key_prefix}_donsheet_control_clear"):
         st.session_state.pop(state_key, None)

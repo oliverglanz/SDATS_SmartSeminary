@@ -43,7 +43,14 @@ def _color_to_rgb(color) -> str | None:
         rgb = str(color.rgb)
         return rgb[-6:].upper()
     if color.type == "indexed" and color.indexed is not None:
-        indexed = COLOR_INDEX[color.indexed]
+        # Excel may store automatic/custom palette references outside
+        # openpyxl's built-in COLOR_INDEX tuple (for example index 64).
+        # Those colors cannot be resolved reliably, but they must not abort
+        # DonSheet validation.
+        try:
+            indexed = COLOR_INDEX[color.indexed]
+        except (IndexError, TypeError):
+            return None
         return str(indexed)[-6:].upper()
     return None
 
@@ -57,14 +64,22 @@ def _is_red_rgb(rgb: str | None) -> bool:
         blue = int(rgb[4:6], 16)
     except ValueError:
         return False
-    return red >= 180 and green <= 120 and blue <= 120
+    # DonSheets use both strong red (for example FF0000) and Excel's common
+    # pale-red fill (FFC7CE).  Detect a red-dominant color instead of only a
+    # dark red, so visually red rows are consistently excluded.
+    return red >= 160 and red - green >= 30 and red - blue >= 20
 
 
 def _cell_has_red_fill(cell) -> bool:
+    """Return whether a cell has a direct red fill marking an excluded row."""
     fill = cell.fill
-    if fill is None or fill.patternType is None:
-        return False
-    return _is_red_rgb(_color_to_rgb(fill.fgColor)) or _is_red_rgb(_color_to_rgb(fill.start_color))
+    if fill is not None and fill.patternType is not None:
+        if any(
+            _is_red_rgb(_color_to_rgb(color))
+            for color in (fill.fgColor, fill.start_color, fill.bgColor, fill.end_color)
+        ):
+            return True
+    return False
 
 
 def _red_highlighted_row_indices(sheet: Worksheet, column_count: int) -> set[int]:
