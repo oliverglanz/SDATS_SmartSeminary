@@ -308,9 +308,13 @@ def build_canonical_dataframe(source: str | bytes | object) -> NormalizationResu
         normalized_frames.append(df)
 
         if df.empty:
-            warnings.append(f"Sheet '{sheet_name}' produced no usable rows after normalization.")
+            warnings.append(
+                f"Workbook '{summary.source_name}', sheet '{sheet_name}' produced no usable rows after normalization."
+            )
         elif df["load/contract"].dropna().empty:
-            warnings.append(f"Sheet '{sheet_name}' has no load/contract values filled yet.")
+            warnings.append(
+                f"Workbook '{summary.source_name}', sheet '{sheet_name}' has no load/contract values filled yet."
+            )
 
     non_empty_frames = [frame for frame in normalized_frames if not frame.empty]
     canonical_df = pd.concat(non_empty_frames, ignore_index=True, sort=False) if non_empty_frames else pd.DataFrame()

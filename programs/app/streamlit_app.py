@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 from pathlib import Path
 import signal
 import threading
@@ -203,7 +204,12 @@ def _build_result_from_payloads(payloads: list[tuple[str, bytes]]):
     source_names = []
 
     for source_name, source_bytes in payloads:
-        results.append(build_canonical_dataframe(source_bytes))
+        # Keep the upload name attached to the in-memory workbook.  The
+        # normalizer includes it in validation warnings, which is essential
+        # when the user uploads more than one DonSheet.
+        source_stream = BytesIO(source_bytes)
+        source_stream.name = source_name
+        results.append(build_canonical_dataframe(source_stream))
         source_names.append(source_name)
 
     combined_result = combine_normalization_results(results)
