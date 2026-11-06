@@ -19,10 +19,8 @@ REQUIRED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Campus {Ssasect Campus}", ("Campus {Ssasect Campus}",)),
     ("Instruction Method {Inst Method}", ("Instruction Method {Inst Method}",)),
     ("Enrollment Cap {Max Enrl}", ("Enrollment Cap {Max Enrl}",)),
-    ("Meeting Type", ("Meeting Type",)),
+    ("Meeting Type", ("Meeting Type", "MeetingType")),
     ("Semester Start Date {Soaterm Start Date}", ("Semester Start Date {Soaterm Start Date}",)),
-    ("Course Period Start Date {Meet Start Date}", ("Course Start Date {Meet Start Date}", "Intensive Period Start Date {Meet Start Date}")),
-    ("Course Period End Date {Meet End Date}", ("Course End Date {Meet End Date}", "Intensive Period End Date {Meet End Date}")),
     ("Semester End Date {Soaterm End Date}", ("Semester End Date {Soaterm End Date}",)),
     ("Weeks", ("Weeks",)),
     ("Instructor Name {Instr Name}", ("Instructor Name {Instr Name}",)),
@@ -50,6 +48,19 @@ DROPDOWN_INSTRUCTOR_REQUIRED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 INSTRUCTOR_NAME_HEADER = "Instructor Name {Instr Name}"
 NOTES_HEADER = "Notes {not in Banner}"
 DELETE_CLASS_NOTE = "delete class"
+MEETING_TYPE_ALIASES = ("Meeting Type", "MeetingType")
+COURSE_PERIOD_DATE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Course Period Start Date {Meet Start Date}", ("Course Start Date {Meet Start Date}", "Intensive Period Start Date {Meet Start Date}")),
+    ("Course Period End Date {Meet End Date}", ("Course End Date {Meet End Date}", "Intensive Period End Date {Meet End Date}")),
+)
+PRE_WORK_DATE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Pre-work Start Date {not in Banner}", ("Pre-work Start Date {not in Banner}",)),
+    ("Pre-work End Date {not in Banner}", ("Pre-work End Date {not in Banner}",)),
+)
+POST_WORK_DATE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Post-work Start Date {not in Banner}", ("Post-work Start Date {not in Banner}",)),
+    ("Post-work End Date {not in Banner}", ("Post-work End Date {not in Banner}",)),
+)
 
 IDENTITY_HEADERS = ("Subject", "Course Number {Crse Num}", "Course Section {Seq Crse Num}", "CRN")
 FACULTY_CREDITS_HEADER = "Faculty Load / Contract Credits {not in Banner}"
@@ -106,6 +117,18 @@ def _has_load_or_contract(value: object) -> bool:
 def _faculty_credits_are_optional(row: pd.Series) -> bool:
     catalog_title = _text(row.get("Catalog Title")).casefold()
     return any(marker in catalog_title for marker in FACULTY_CREDITS_OPTIONAL_TITLE_MARKERS)
+
+
+def _meeting_type_date_fields(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return the only date fields required for the row's Meeting Type."""
+    meeting_type = _text(value).upper()
+    if meeting_type == "PRE":
+        return PRE_WORK_DATE_FIELDS
+    if meeting_type == "POST":
+        return POST_WORK_DATE_FIELDS
+    # CLAS and ordinary meeting types use the current Course Start/End headers;
+    # older DonSheets use the Intensive Period aliases handled above.
+    return COURSE_PERIOD_DATE_FIELDS
 
 
 def _dropdown_instructor_names(workbook: pd.ExcelFile) -> set[str]:
@@ -182,6 +205,19 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                 ]
             checked_courses += len(course_rows)
 
+            meeting_type_header = next((header for header in MEETING_TYPE_ALIASES if header in headers), None)
+            if meeting_type_header is not None:
+                required_date_fields = {
+                    field
+                    for _, course_row in course_rows.iterrows()
+                    for field in _meeting_type_date_fields(course_row.get(meeting_type_header))
+                }
+                for label, aliases in required_date_fields:
+                    if not any(alias in headers for alias in aliases):
+                        issue = _issue_base(source_name, sheet_name, "")
+                        issue["Missing/Wrong Field"] = f"Required column is missing: {label}"
+                        issues.append(issue)
+
             assigned_load_contract_keys = {
                 key
                 for _, course_row in course_rows.iterrows()
@@ -223,6 +259,14 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
                         issue["Missing/Wrong Field"] = f"{column_letters[source_header]}_{source_header}"
                         issues.append(issue)
+
+                if meeting_type_header is not None:
+                    for _, aliases in _meeting_type_date_fields(row.get(meeting_type_header)):
+                        source_header = next((alias for alias in aliases if alias in headers), None)
+                        if source_header is not None and _text(row.get(source_header)) == "":
+                            issue = _issue_base(source_name, sheet_name, index + 2, row)
+                            issue["Missing/Wrong Field"] = f"{column_letters[source_header]}_{source_header}"
+                            issues.append(issue)
 
                 selected_instructor = _instructor_key(row.get(INSTRUCTOR_NAME_HEADER)) in dropdown_instructor_names
                 if selected_instructor:
