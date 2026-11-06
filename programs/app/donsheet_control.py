@@ -245,9 +245,15 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                 faculty_credits = row.get(FACULTY_CREDITS_HEADER)
                 if FACULTY_CREDITS_HEADER not in headers:
                     continue
+                # Independent studies, special topics, and directed readings
+                # are exempt from all Faculty Credits checks.  Their value may
+                # legitimately be blank or populated independently of the
+                # normal load/contract rule.
+                if _faculty_credits_are_optional(row):
+                    continue
                 faculty_field = f"{column_letters[FACULTY_CREDITS_HEADER]}_{FACULTY_CREDITS_HEADER}"
                 if load_contract in FACULTY_CREDITS_ALLOWED_LOAD_TYPES:
-                    if _text(faculty_credits) == "" and not _faculty_credits_are_optional(row):
+                    if _text(faculty_credits) == "":
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
                         issue["Missing/Wrong Field"] = faculty_field
                         issues.append(issue)
