@@ -66,7 +66,7 @@ IDENTITY_HEADERS = ("Subject", "Course Number {Crse Num}", "Course Section {Seq 
 FACULTY_CREDITS_HEADER = "Faculty Load / Contract Credits {not in Banner}"
 LOAD_CONTRACT_HEADER = "load/contract {not in Banner}"
 FACULTY_CREDITS_ALLOWED_LOAD_TYPES = {"load", "contract"}
-FACULTY_CREDITS_OPTIONAL_TITLE_MARKERS = ("independent", "ind st", "topics in", "directed rdg")
+FACULTY_CREDITS_OPTIONAL_LOAD_TYPES = {"na", "n/a", "n / a"}
 LOAD_CONTRACT_COURSE_KEY_HEADERS = (
     "Subject",
     "Course Number {Crse Num}",
@@ -114,11 +114,6 @@ def _has_load_or_contract(value: object) -> bool:
     return "load" in normalized or "contract" in normalized
 
 
-def _faculty_credits_are_optional(row: pd.Series) -> bool:
-    catalog_title = _text(row.get("Catalog Title")).casefold()
-    return any(marker in catalog_title for marker in FACULTY_CREDITS_OPTIONAL_TITLE_MARKERS)
-
-
 def _meeting_type_date_fields(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Return the only date fields required for the row's Meeting Type."""
     meeting_type = _text(value).upper()
@@ -136,7 +131,7 @@ def _dropdown_instructor_names(workbook: pd.ExcelFile) -> set[str]:
     for helper_sheet in ("DropDownMenu", "InstructorMap", "_names_lookup"):
         if helper_sheet not in workbook.sheet_names:
             continue
-        frame = pd.read_excel(workbook, sheet_name=helper_sheet, dtype=object)
+        frame = pd.read_excel(workbook, sheet_name=helper_sheet, dtype=object, keep_default_na=False)
         candidate_header = INSTRUCTOR_NAME_HEADER if INSTRUCTOR_NAME_HEADER in frame.columns else "Faculty Name"
         if candidate_header in frame.columns:
             return {_instructor_key(value) for value in frame[candidate_header] if _instructor_key(value)}
@@ -169,7 +164,10 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
         for sheet_name in workbook.sheet_names:
             if sheet_name in HELPER_SHEETS or sheet_name.startswith("_"):
                 continue
-            frame = pd.read_excel(workbook, sheet_name=sheet_name, dtype=object)
+            # Preserve literal values such as NA and N/A.  pandas otherwise
+            # converts them to missing values before the control rules can
+            # recognize them as valid load/contract categories.
+            frame = pd.read_excel(workbook, sheet_name=sheet_name, dtype=object, keep_default_na=False)
             if frame.empty:
                 continue
             checked_sheets += 1
@@ -248,15 +246,18 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                         issues.append(issue)
 
             for index, row in course_rows.iterrows():
+                load_contract = _text(row.get(LOAD_CONTRACT_HEADER)).lower()
                 for label, aliases in REQUIRED_FIELDS:
                     source_header = next((alias for alias in aliases if alias in headers), None)
                     if source_header is not None and _text(row.get(source_header)) == "":
                         if (
                             source_header == LOAD_CONTRACT_HEADER
-                            and (
-                                _faculty_credits_are_optional(row)
-                                or _load_contract_course_key(row) in assigned_load_contract_keys
-                            )
+                            and _load_contract_course_key(row) in assigned_load_contract_keys
+                        ):
+                            continue
+                        if (
+                            source_header == "Instruction Method {Inst Method}"
+                            and load_contract in FACULTY_CREDITS_OPTIONAL_LOAD_TYPES
                         ):
                             continue
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
@@ -280,7 +281,6 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                             issue["Missing/Wrong Field"] = f"{column_letters[source_header]}_{source_header}"
                             issues.append(issue)
 
-                load_contract = _text(row.get(LOAD_CONTRACT_HEADER)).lower()
                 if load_contract == "contract":
                     for _, aliases in CONTRACT_REQUIRED_FIELDS:
                         source_header = next((alias for alias in aliases if alias in headers), None)
@@ -292,13 +292,12 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                 faculty_credits = row.get(FACULTY_CREDITS_HEADER)
                 if FACULTY_CREDITS_HEADER not in headers:
                     continue
-                # Independent studies, special topics, and directed readings
-                # are exempt from all Faculty Credits checks.  Their value may
-                # legitimately be blank or populated independently of the
-                # normal load/contract rule.
-                if _faculty_credits_are_optional(row):
-                    continue
                 faculty_field = f"{column_letters[FACULTY_CREDITS_HEADER]}_{FACULTY_CREDITS_HEADER}"
+                if load_contract in FACULTY_CREDITS_OPTIONAL_LOAD_TYPES:
+                    # NA/N/A course types are outside the faculty-credit
+                    # workflow.  Do not validate this field, including a
+                    # preserved zero or formula result.
+                    continue
                 if load_contract in FACULTY_CREDITS_ALLOWED_LOAD_TYPES:
                     if _text(faculty_credits) == "":
                         issue = _issue_base(source_name, sheet_name, index + 2, row)
