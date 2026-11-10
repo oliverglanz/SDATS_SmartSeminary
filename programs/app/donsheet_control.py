@@ -67,6 +67,7 @@ FACULTY_CREDITS_HEADER = "Faculty Load / Contract Credits {not in Banner}"
 LOAD_CONTRACT_HEADER = "load/contract {not in Banner}"
 FACULTY_CREDITS_ALLOWED_LOAD_TYPES = {"load", "contract"}
 FACULTY_CREDITS_OPTIONAL_LOAD_TYPES = {"na", "n/a", "n / a"}
+FACULTY_CREDITS_EMPTY_OR_ZERO_LOAD_TYPES = {"x-list", *FACULTY_CREDITS_OPTIONAL_LOAD_TYPES}
 LOAD_CONTRACT_COURSE_KEY_HEADERS = (
     "Subject",
     "Course Number {Crse Num}",
@@ -112,6 +113,16 @@ def _load_contract_course_key(row: pd.Series) -> tuple[str, str, str, str] | Non
 def _has_load_or_contract(value: object) -> bool:
     normalized = _text(value).casefold()
     return "load" in normalized or "contract" in normalized
+
+
+def _is_empty_or_zero(value: object) -> bool:
+    text = _text(value)
+    if not text:
+        return True
+    try:
+        return float(text.replace(",", "")) == 0
+    except ValueError:
+        return False
 
 
 def _meeting_type_date_fields(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -293,10 +304,14 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
                 if FACULTY_CREDITS_HEADER not in headers:
                     continue
                 faculty_field = f"{column_letters[FACULTY_CREDITS_HEADER]}_{FACULTY_CREDITS_HEADER}"
-                if load_contract in FACULTY_CREDITS_OPTIONAL_LOAD_TYPES:
-                    # NA/N/A course types are outside the faculty-credit
-                    # workflow.  Do not validate this field, including a
-                    # preserved zero or formula result.
+                if load_contract in FACULTY_CREDITS_EMPTY_OR_ZERO_LOAD_TYPES:
+                    if not _is_empty_or_zero(faculty_credits):
+                        issue = _issue_base(source_name, sheet_name, index + 2, row)
+                        issue["Missing/Wrong Field"] = (
+                            f"{faculty_field} must be empty or 0 when "
+                            f"{column_letters.get(LOAD_CONTRACT_HEADER, '?')}_{LOAD_CONTRACT_HEADER} is '{load_contract}'"
+                        )
+                        issues.append(issue)
                     continue
                 if load_contract in FACULTY_CREDITS_ALLOWED_LOAD_TYPES:
                     if _text(faculty_credits) == "":
