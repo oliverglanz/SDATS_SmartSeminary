@@ -105,6 +105,30 @@ def _source_name(source: str | Path | bytes | BinaryIO, excel_file: pd.ExcelFile
     return "uploaded workbook"
 
 
+def normalize_donsheet_headers(frame: pd.DataFrame) -> pd.DataFrame:
+    """Use the current ``{not in Banner}`` spelling for legacy ``{NIB}`` headers.
+
+    ``NIB`` was the original abbreviation for "not in Banner."  It describes
+    the same field, so all DonSheet readers should accept either spelling.
+    If both spellings exist, the current spelling takes precedence and blank
+    cells are filled from its legacy counterpart.
+    """
+    normalized = frame.copy()
+    for header in list(normalized.columns):
+        if not isinstance(header, str) or "{NIB}" not in header:
+            continue
+        current_header = header.replace("{NIB}", "{not in Banner}")
+        if current_header not in normalized.columns:
+            normalized = normalized.rename(columns={header: current_header})
+            continue
+
+        current_values = normalized[current_header]
+        missing_current = current_values.isna() | current_values.astype("string").str.strip().eq("")
+        normalized[current_header] = current_values.where(~missing_current, normalized[header])
+        normalized = normalized.drop(columns=[header])
+    return normalized
+
+
 def load_workbook(source: str | Path | bytes | BinaryIO) -> tuple[pd.ExcelFile, WorkbookSummary]:
     excel_file = _load_excel_file(source)
     sheet_names = list(excel_file.sheet_names)
@@ -139,7 +163,7 @@ def read_department_sheets(
     department_frames: dict[str, pd.DataFrame] = {}
     styled_workbook = _load_openpyxl_workbook(source) if source is not None else None
     for sheet_name in sheet_names:
-        frame = pd.read_excel(excel_file, sheet_name=sheet_name)
+        frame = normalize_donsheet_headers(pd.read_excel(excel_file, sheet_name=sheet_name))
         if styled_workbook is not None and sheet_name in styled_workbook.sheetnames and not frame.empty:
             red_rows = _red_highlighted_row_indices(styled_workbook[sheet_name], len(frame.columns))
             if red_rows:

@@ -11,6 +11,8 @@ from openpyxl.styles import Alignment, Font, GradientFill, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+from app.io_donsheet import normalize_donsheet_headers
+
 
 OUTPUT_FILENAME = "ColorReport_SEM_course_updates.xlsx"
 BASE_KEY = "CRN"
@@ -201,6 +203,7 @@ def _load_donsheet(data: bytes) -> tuple[pd.DataFrame, list[str], object]:
             continue
         frame = raw.iloc[1:].copy()
         frame.columns = _unique_headers(raw.iloc[0].tolist())
+        frame = normalize_donsheet_headers(frame)
         frame = frame.dropna(axis=0, how="all")
         if not frame.empty:
             frame["_SheetName"] = name

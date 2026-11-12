@@ -42,6 +42,17 @@ COLUMN_MAP = {
     "Campus Restriction {Camp Restr CC}": "Location",
 }
 
+# Older DonSheets used ``{NIB}`` (Not in Banner) in place of
+# ``{not in Banner}``.  Treat both labels as the same DonSheet field so an
+# older workbook's budget data is not silently omitted.
+COLUMN_MAP.update(
+    {
+        source_column.replace("{not in Banner}", "{NIB}"): canonical_column
+        for source_column, canonical_column in list(COLUMN_MAP.items())
+        if "{not in Banner}" in source_column
+    }
+)
+
 
 MODE_MAP = {
     "ASYNC": "ASYNC",

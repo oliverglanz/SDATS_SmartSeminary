@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from app.config import HELPER_SHEETS
-from app.io_donsheet import _red_highlighted_row_indices
+from app.io_donsheet import _red_highlighted_row_indices, normalize_donsheet_headers
 
 
 REQUIRED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -178,7 +178,9 @@ def analyze_missing_donsheet_fields(payloads: list[tuple[str, bytes]]) -> DonShe
             # Preserve literal values such as NA and N/A.  pandas otherwise
             # converts them to missing values before the control rules can
             # recognize them as valid load/contract categories.
-            frame = pd.read_excel(workbook, sheet_name=sheet_name, dtype=object, keep_default_na=False)
+            frame = normalize_donsheet_headers(
+                pd.read_excel(workbook, sheet_name=sheet_name, dtype=object, keep_default_na=False)
+            )
             if frame.empty:
                 continue
             checked_sheets += 1

@@ -1823,9 +1823,17 @@ def _budget_report_master(working: pd.DataFrame) -> pd.DataFrame:
         "total contract amount",
         "account to be charged",
     ]
+    # A workbook can legitimately normalize to no usable course rows (for
+    # example, when every row is marked for deletion).  Keep the Master Data
+    # report structurally valid in that case instead of sorting by columns that
+    # are not present on an empty source frame.
+    if working.empty:
+        return pd.DataFrame(columns=columns)
+
     available = [column for column in columns if column in working.columns]
     report = working.loc[:, available].copy()
-    return report.sort_values(["Department", "Semester", "Faculty Name", "Course"], na_position="last")
+    sort_columns = [column for column in ["Department", "Semester", "Faculty Name", "Course"] if column in report]
+    return report.sort_values(sort_columns, na_position="last") if sort_columns else report
 
 
 def generate_budget_reports_bundle(df: pd.DataFrame, source_label: str = "donsheet") -> ReportBundle:

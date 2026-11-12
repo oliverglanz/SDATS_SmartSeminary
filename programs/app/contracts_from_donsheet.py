@@ -17,6 +17,7 @@ from reportlab.lib.colors import blue
 from reportlab.pdfgen import canvas
 
 from .config import HELPER_SHEETS, PROJECT_ROOT
+from .io_donsheet import normalize_donsheet_headers
 
 
 DEFAULT_RATE_PER_CREDIT = 1050
@@ -146,7 +147,7 @@ def extract_contract_rows_from_donsheet(excel_path: Path) -> pd.DataFrame:
             continue
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=OPENPYXL_WARNING)
-            sheet_df = pd.read_excel(excel_path, sheet_name=sheet_name)
+            sheet_df = normalize_donsheet_headers(pd.read_excel(excel_path, sheet_name=sheet_name))
         if sheet_df.empty:
             continue
         for row_index, row in sheet_df.iterrows():
