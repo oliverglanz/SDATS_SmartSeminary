@@ -262,6 +262,17 @@ def _department_cycle_semesters(series: pd.Series) -> list[str]:
     return [label for label in target_labels if label in seen]
 
 
+def _latest_department_cycle_semesters(series: pd.Series) -> list[str]:
+    """Return the most recent Summer/Fall/Spring cycle represented in the data."""
+    values = [str(value).strip() for value in series.dropna().tolist() if str(value).strip()]
+    if not values:
+        return []
+    start_year = max(_academic_year_sort_key(value)[0] for value in values)
+    target_labels = [f"Summer {start_year}", f"Fall {start_year}", f"Spring {start_year + 1}"]
+    seen = set(values)
+    return [label for label in target_labels if label in seen]
+
+
 def _clean_numeric_display(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     out = frame.copy()
     for column in columns:
@@ -1654,6 +1665,212 @@ def generate_department_contracts_overview_report(df: pd.DataFrame, department: 
     )
 
 
+def _course_schedule_label(row: pd.Series) -> str:
+    """Build the course label shown in the department teaching schedule."""
+    course = _safe_text(row.get("Course Text"))
+    title = _safe_text(row.get("Catalog Title"))
+    return " ".join(part for part in [course, title] if part)
+
+
+def _is_off_campus_teaching_appointment(row: pd.Series) -> bool:
+    """Match the reference schedule's red-font treatment for non-main-campus courses."""
+    campus = _safe_text(row.get("Campus Code")).upper()
+    if not campus:
+        campus = _safe_text(row.get("Location")).upper()
+    return campus not in {"", "0", "0.0", "7", "7.0", "MC", "MAIN CAMPUS"}
+
+
+def _summer_part_of_term_marker(row: pd.Series, term_number: int) -> str:
+    """Return an x when a Summer course is assigned to the requested term."""
+    value = _safe_text(row.get("Part-Of-Term")) or _safe_text(row.get("Part-of-Term"))
+    term_values = set(re.findall(r"\d+", value))
+    return "x" if str(term_number) in term_values else ""
+
+
+def _add_department_budget_course_schedule(workbook, working: pd.DataFrame, department: str) -> None:
+    """Add a faculty-by-semester teaching-load schedule to an overview workbook."""
+    sheet_name = "Budget Course Schedule A-B"
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+    ws = workbook.create_sheet(sheet_name)
+    ws.sheet_view.showGridLines = False
+
+    schedule = working.copy()
+    if not schedule.empty:
+        schedule = schedule.loc[
+            _string_column(schedule, "Faculty Name").notna()
+            & _string_column(schedule, "Faculty Name").ne("")
+            & _string_column(schedule, "Semester").notna()
+            & _string_column(schedule, "Semester").ne("")
+        ].copy()
+
+    semesters = _latest_department_cycle_semesters(schedule["Semester"]) if not schedule.empty else []
+    semester_layouts: list[dict[str, object]] = []
+    next_column = 2
+    for semester in semesters:
+        is_summer = semester.lower().startswith("summer ")
+        labels = ["Course", "Term 1", "Term 2", "Term 3", "Mode", "Location", "Program", "Cr."] if is_summer else [
+            "Course", "Mode", "Location", "Program", "Cr."
+        ]
+        semester_layouts.append(
+            {
+                "semester": semester,
+                "start_column": next_column,
+                "labels": labels,
+                "credit_column": next_column + len(labels) - 1,
+                "is_summer": is_summer,
+            }
+        )
+        next_column += len(labels)
+    total_column = next_column
+    last_column_letter = get_column_letter(total_column)
+
+    ws.merge_cells(f"A1:{last_column_letter}1")
+    ws["A1"] = f"{department} Budget Course Schedule A-B"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True)
+    ws["A1"].alignment = Alignment(horizontal="center")
+    ws.merge_cells(f"A2:{last_column_letter}2")
+    ws["A2"] = ", ".join(semesters) if semesters else "No scheduled courses found"
+    ws["A2"].font = Font(name="Arial", size=10, italic=True)
+    ws["A2"].alignment = Alignment(horizontal="center")
+    ws["A3"] = "Red = Off-campus Teaching Appointments"
+    ws["A3"].font = Font(name="Arial", size=10, bold=True, color="FF0000")
+
+    if not semesters:
+        ws["A4"] = "No course rows with both an instructor and semester were found for this department."
+        ws.column_dimensions["A"].width = 78
+        return
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    semester_fills = {
+        "summer": PatternFill("solid", fgColor="FFF475"),
+        "fall": PatternFill("solid", fgColor="FF99CC"),
+        "spring": PatternFill("solid", fgColor="CCFF90"),
+    }
+    faculty_fill = PatternFill("solid", fgColor="92D050")
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    semester_header_font = Font(name="Arial", size=10, bold=True, color="000000")
+    faculty_font = Font(name="Arial", size=10, bold=True)
+    off_campus_font = Font(name="Arial", size=10, color="FF0000")
+    thin_border = Border(bottom=Side(style="thin", color="B7B7B7"))
+
+    ws.merge_cells("A4:A5")
+    ws["A4"] = "Faculty Name"
+    ws["A4"].fill = header_fill
+    ws["A4"].font = header_font
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+
+    for layout in semester_layouts:
+        semester = layout["semester"]
+        start_column = layout["start_column"]
+        labels = layout["labels"]
+        end_column = start_column + len(labels) - 1
+        ws.merge_cells(start_row=4, start_column=start_column, end_row=4, end_column=end_column)
+        semester_header = ws.cell(4, start_column, semester)
+        season = semester.split(" ", 1)[0].lower()
+        semester_fill = semester_fills.get(season, header_fill)
+        semester_header.fill = semester_fill
+        semester_header.font = semester_header_font
+        semester_header.alignment = Alignment(horizontal="center", vertical="center")
+        for column, label in enumerate(labels, start=start_column):
+            cell = ws.cell(5, column, label)
+            cell.fill = semester_fill
+            cell.font = semester_header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.merge_cells(start_row=4, start_column=total_column, end_row=5, end_column=total_column)
+    total_header = ws.cell(4, total_column, "Total Cr.")
+    total_header.fill = header_fill
+    total_header.font = header_font
+    total_header.alignment = Alignment(horizontal="center", vertical="center")
+
+    faculty_names = sorted(
+        _string_column(schedule, "Faculty Name").dropna().unique().tolist(),
+        key=lambda value: str(value).casefold(),
+    )
+    current_row = 6
+    for faculty_name in faculty_names:
+        faculty_rows = schedule.loc[_string_column(schedule, "Faculty Name").eq(faculty_name)].copy()
+        semester_rows = {
+            semester: faculty_rows.loc[faculty_rows["Semester"].eq(semester)].sort_values(
+                ["Course Text", "Catalog Title"], na_position="last"
+            )
+            for semester in semesters
+        }
+        course_row_count = max(len(rows) for rows in semester_rows.values())
+        course_start_row = current_row + 1
+        course_end_row = current_row + course_row_count
+
+        for column in range(1, total_column + 1):
+            cell = ws.cell(current_row, column)
+            cell.fill = faculty_fill
+            cell.font = faculty_font
+            cell.border = thin_border
+        ws.cell(current_row, 1, faculty_name)
+
+        total_cells: list[str] = []
+        for layout in semester_layouts:
+            semester = layout["semester"]
+            credit_column = layout["credit_column"]
+            credit_cell = ws.cell(current_row, credit_column)
+            if not semester_rows[semester].empty:
+                credit_cell.value = f"=SUM({get_column_letter(credit_column)}{course_start_row}:{get_column_letter(credit_column)}{course_end_row})"
+                total_cells.append(credit_cell.coordinate)
+            credit_cell.number_format = "0.##"
+            credit_cell.alignment = Alignment(horizontal="center")
+        ws.cell(current_row, total_column).value = f"=SUM({','.join(total_cells)})" if total_cells else 0
+        ws.cell(current_row, total_column).number_format = "0.##"
+        ws.cell(current_row, total_column).alignment = Alignment(horizontal="center")
+
+        for offset in range(course_row_count):
+            target_row = course_start_row + offset
+            for layout in semester_layouts:
+                semester = layout["semester"]
+                entries = semester_rows[semester]
+                if offset >= len(entries):
+                    continue
+                entry = entries.iloc[offset]
+                start_column = layout["start_column"]
+                values = [_course_schedule_label(entry)]
+                if layout["is_summer"]:
+                    values.extend(_summer_part_of_term_marker(entry, term_number) for term_number in range(1, 4))
+                values.extend(
+                    [
+                        _safe_text(entry.get("Mode")),
+                        _location_abbreviation(entry.get("Location")),
+                        _safe_text(entry.get("Program")),
+                        entry.get("Cr."),
+                    ]
+                )
+                for column, value in enumerate(values, start=start_column):
+                    cell = ws.cell(target_row, column, value)
+                    cell.alignment = Alignment(vertical="top", wrap_text=column == start_column)
+                    if _is_off_campus_teaching_appointment(entry):
+                        cell.font = off_campus_font
+                    if column == layout["credit_column"]:
+                        cell.number_format = "0.##"
+                        cell.alignment = Alignment(horizontal="center", vertical="top")
+        current_row = course_end_row + 2
+
+    last_filled_row = current_row - 2
+    for layout in semester_layouts:
+        semester = layout["semester"]
+        season = semester.split(" ", 1)[0].lower()
+        credit_fill = semester_fills.get(season, header_fill)
+        credit_column = layout["credit_column"]
+        for row_number in range(4, last_filled_row + 1):
+            ws.cell(row_number, credit_column).fill = credit_fill
+
+    ws.freeze_panes = "B6"
+    ws.column_dimensions["A"].width = 24
+    for layout in semester_layouts:
+        start_column = layout["start_column"]
+        widths = [34, 10, 10, 10, 14, 14, 18, 8] if layout["is_summer"] else [34, 14, 14, 18, 8]
+        for column, width in enumerate(widths, start=start_column):
+            ws.column_dimensions[get_column_letter(column)].width = width
+    ws.column_dimensions[last_column_letter].width = 11
+
+
 def generate_department_overview_bundle(
     df: pd.DataFrame,
     department: str,
@@ -1690,6 +1907,7 @@ def generate_department_overview_bundle(
             _set_schedule_class_column_widths(workbook["Weekly Schedule"], DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH)
         if "SYNC Schedule" in workbook.sheetnames:
             _set_schedule_class_column_widths(workbook["SYNC Schedule"], 28)
+    _add_department_budget_course_schedule(workbook, working, department)
     combined_buffer = BytesIO()
     workbook.save(combined_buffer)
     preview_df = sheets["report_001a"]

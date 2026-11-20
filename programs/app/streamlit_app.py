@@ -55,6 +55,8 @@ DEPARTMENT_ADMIN_READINESS_KEY = "smart_seminary_department_admin_readiness"
 DON_SHEET_CONTROL_RESULT_KEY = "smart_seminary_donsheet_control_result"
 BANNER_COMPARISON_RESULT_KEY = "smart_seminary_banner_comparison_result"
 KAREN_PREFILL_RESULT_KEY = "smart_seminary_karen_prefill_result"
+KAREN_DEPARTMENT_OVERVIEW_RESULT_KEY = "smart_seminary_karen_department_overview_result"
+SHARI_DEPARTMENT_OVERVIEW_RESULT_KEY = "smart_seminary_shari_department_overview_result"
 ENTIRE_SEMINARY_OPTION = "Entire Seminary"
 
 ACTION_CONTRACT_DONSHEET = "Create contract PDFs - based on DonSheet"
@@ -323,6 +325,18 @@ def _load_result_for_current_role(uploaded_files, use_sample: bool, public_link:
     return result, source_names, payloads
 
 
+def _render_uploaded_file_names(uploaded_files, *, label: str = "Uploaded DonSheet file(s)") -> None:
+    """Show upload names vertically so long workbook names remain readable."""
+    if uploaded_files is None:
+        return
+    files = list(uploaded_files) if isinstance(uploaded_files, (list, tuple)) else [uploaded_files]
+    if not files:
+        return
+    st.caption(label)
+    for uploaded_file in files:
+        st.write(f"• {uploaded_file.name}")
+
+
 def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) -> None:
     """Render the shared missing-field report for every DonSheet-facing role."""
     state_key = f"{DON_SHEET_CONTROL_RESULT_KEY}_{key_prefix}"
@@ -333,6 +347,7 @@ def _render_donsheet_control(key_prefix: str, use_sample_default: bool = False) 
         accept_multiple_files=True,
         key=f"{key_prefix}_donsheet_control_upload",
     )
+    _render_uploaded_file_names(uploaded_files)
     public_link = _public_donsheet_link_input(f"{key_prefix}_donsheet_control_public_link")
     use_sample = st.checkbox(
         "Use bundled default DonSheet when no file is uploaded",
@@ -401,8 +416,63 @@ def _load_sharisheet_result(uploaded_files, use_folder: bool):
     return result, [name for name, _ in payloads]
 
 
+def _render_department_overview_generator(
+    key_prefix: str,
+    result_state_key: str,
+    *,
+    use_sample_default: bool,
+) -> None:
+    """Render the DonSheet-based department overview workflow for any role."""
+    st.write("Choose a department, upload a DonSheet, and generate the department overview workbook.")
+    selected_department = st.radio(
+        "Department",
+        options=DEPARTMENT_OPTIONS,
+        horizontal=True,
+        key=f"{key_prefix}_selected_department",
+    )
+    uploaded_files = st.file_uploader(
+        "Upload DonSheet workbook",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        key=f"{key_prefix}_upload",
+    )
+    _render_uploaded_file_names(uploaded_files)
+    public_link = _public_donsheet_link_input(f"{key_prefix}_public_link")
+    use_sample = st.checkbox(
+        "Use bundled default DonSheet when no file is uploaded",
+        value=use_sample_default,
+        key=f"{key_prefix}_sample",
+    )
+
+    if st.button("Generate department overview reports", type="primary", key=f"{key_prefix}_generate"):
+        result, source_names, donsheet_payloads = _load_result_for_current_role(uploaded_files, use_sample, public_link)
+        if result is None:
+            return
+        report = generate_department_overview_bundle(result.canonical_df, selected_department, donsheet_payloads)
+        st.session_state[result_state_key] = {
+            "result": result,
+            "source_names": source_names,
+            "report": report,
+        }
+
+    payload = st.session_state.get(result_state_key)
+    if payload is not None:
+        top_left, top_right = st.columns([5, 1])
+        with top_right:
+            if st.button("Clear overview results", use_container_width=True, key=f"{key_prefix}_clear"):
+                st.session_state.pop(result_state_key, None)
+                st.rerun()
+        _render_generator_output(payload["result"], payload["source_names"], payload["report"])
+
+
 def _render_department_admins() -> None:
-    st.subheader("Department Admins")
+    selected_department = st.session_state.get("department_admin_selected_department")
+    heading = (
+        f"{selected_department} Department Admin"
+        if selected_department in DEPARTMENT_OPTIONS
+        else "Department Admins"
+    )
+    st.subheader(heading)
     _render_shared_donsheet_links()
     action = st.radio(
         "Choose an action",
@@ -418,6 +488,7 @@ def _render_department_admins() -> None:
             accept_multiple_files=True,
             key="department_admin_readiness_upload",
         )
+        _render_uploaded_file_names(uploaded_files)
         public_link = _public_donsheet_link_input("department_admin_readiness_public_link")
         use_sample = st.checkbox(
             "Use bundled default DonSheet when no file is uploaded",
@@ -451,45 +522,11 @@ def _render_department_admins() -> None:
         _render_donsheet_control("department_admin", use_sample_default=True)
         return
 
-    st.write("Choose a department, upload a DonSheet, and generate the department overview workbook.")
-
-    selected_department = st.radio(
-        "Department",
-        options=DEPARTMENT_OPTIONS,
-        horizontal=True,
+    _render_department_overview_generator(
+        "department_admin",
+        DEPARTMENT_ADMIN_RESULT_KEY,
+        use_sample_default=True,
     )
-    uploaded_files = st.file_uploader(
-        "Upload DonSheet workbook",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        key="department_admin_upload",
-    )
-    public_link = _public_donsheet_link_input("department_admin_public_link")
-    use_sample = st.checkbox(
-        "Use bundled default DonSheet when no file is uploaded",
-        value=True,
-        key="department_admin_sample",
-    )
-
-    if st.button("Generate department overview reports", type="primary", key="department_admin_generate"):
-        result, source_names, donsheet_payloads = _load_result_for_current_role(uploaded_files, use_sample, public_link)
-        if result is None:
-            return
-        report = generate_department_overview_bundle(result.canonical_df, selected_department, donsheet_payloads)
-        st.session_state[DEPARTMENT_ADMIN_RESULT_KEY] = {
-            "result": result,
-            "source_names": source_names,
-            "report": report,
-        }
-
-    payload = st.session_state.get(DEPARTMENT_ADMIN_RESULT_KEY)
-    if payload is not None:
-        top_left, top_right = st.columns([5, 1])
-        with top_right:
-            if st.button("Clear admin results", use_container_width=True, key="department_admin_clear"):
-                st.session_state.pop(DEPARTMENT_ADMIN_RESULT_KEY, None)
-                st.rerun()
-        _render_generator_output(payload["result"], payload["source_names"], payload["report"])
 
 
 def _render_karen() -> None:
@@ -502,7 +539,13 @@ def _render_karen() -> None:
 
     action = st.radio(
         "Choose an action",
-        options=[ACTION_KAREN_PREFILL, ACTION_KAREN_SCHEDULE, ACTION_DONSHEET_CONTROL, ACTION_KAREN_SHARED_LINKS],
+        options=[
+            ACTION_KAREN_PREFILL,
+            ACTION_KAREN_SCHEDULE,
+            ACTION_DEPARTMENT_OVERVIEW,
+            ACTION_DONSHEET_CONTROL,
+            ACTION_KAREN_SHARED_LINKS,
+        ],
         key="karen_action",
     )
     if action == ACTION_KAREN_SHARED_LINKS:
@@ -511,6 +554,14 @@ def _render_karen() -> None:
 
     if action == ACTION_DONSHEET_CONTROL:
         _render_donsheet_control("karen")
+        return
+
+    if action == ACTION_DEPARTMENT_OVERVIEW:
+        _render_department_overview_generator(
+            "karen_department_overview",
+            KAREN_DEPARTMENT_OVERVIEW_RESULT_KEY,
+            use_sample_default=False,
+        )
         return
 
     if action == ACTION_KAREN_PREFILL:
@@ -577,6 +628,7 @@ def _render_karen() -> None:
         accept_multiple_files=False,
         key="karen_upload",
     )
+    _render_uploaded_file_names(uploaded_file)
     public_link = _public_donsheet_link_input("karen_schedule_public_link")
     use_sample = st.checkbox(
         "Use bundled default DonSheet when no file is uploaded",
@@ -639,6 +691,7 @@ def _render_shari() -> None:
             ACTION_BUDGET_DONSHEET,
             ACTION_CONTRACT_SHARISHEET,
             ACTION_BUDGET_SHARISHEET,
+            ACTION_DEPARTMENT_OVERVIEW,
             ACTION_DONSHEET_CONTROL,
         ],
         key="shari_action",
@@ -647,12 +700,24 @@ def _render_shari() -> None:
         _render_donsheet_control("shari", use_sample_default=True)
         return
 
+    if action == ACTION_DEPARTMENT_OVERVIEW:
+        _render_department_overview_generator(
+            "shari_department_overview",
+            SHARI_DEPARTMENT_OVERVIEW_RESULT_KEY,
+            use_sample_default=True,
+        )
+        return
+
     is_sharisheet_action = action in {ACTION_CONTRACT_SHARISHEET, ACTION_BUDGET_SHARISHEET}
     uploaded_files = st.file_uploader(
         "Upload ShariSheet workbook(s)" if is_sharisheet_action else "Upload DonSheet workbook",
         type=["xlsx"],
         accept_multiple_files=True,
         key="shari_upload",
+    )
+    _render_uploaded_file_names(
+        uploaded_files,
+        label="Uploaded ShariSheet file(s)" if is_sharisheet_action else "Uploaded DonSheet file(s)",
     )
     public_link = "" if is_sharisheet_action else _public_donsheet_link_input("shari_donsheet_public_link")
     if is_sharisheet_action:
@@ -817,6 +882,7 @@ def _render_banner_donsheet_comparison() -> None:
         accept_multiple_files=False,
         key="banner_comparison_donsheet_upload",
     )
+    _render_uploaded_file_names(donsheet_file)
 
     if st.button("Create discrepancy report", type="primary", key="banner_comparison_generate"):
         if banner_file is None or donsheet_file is None:
