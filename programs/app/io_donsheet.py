@@ -58,6 +58,10 @@ def _color_to_rgb(color) -> str | None:
 def _is_red_rgb(rgb: str | None) -> bool:
     if not rgb or len(rgb) != 6:
         return False
+    # ``FFFFC000`` is the DonSheet's amber fiscal-year input fill.  It is not
+    # an exclusion marker, even though its red component is dominant.
+    if rgb.upper() == "FFC000":
+        return False
     try:
         red = int(rgb[0:2], 16)
         green = int(rgb[2:4], 16)
@@ -65,9 +69,10 @@ def _is_red_rgb(rgb: str | None) -> bool:
     except ValueError:
         return False
     # DonSheets use both strong red (for example FF0000) and Excel's common
-    # pale-red fill (FFC7CE).  Detect a red-dominant color instead of only a
-    # dark red, so visually red rows are consistently excluded.
-    return red >= 160 and red - green >= 30 and red - blue >= 20
+    # pale-red fill (FFC7CE).  Pale red has similar green/blue components,
+    # unlike amber/orange fills whose green component is much higher than
+    # blue.  This retains red exclusions without misclassifying amber fills.
+    return red >= 160 and red - blue >= 30 and (green <= 150 or abs(green - blue) <= 35)
 
 
 def _cell_has_red_fill(cell) -> bool:
