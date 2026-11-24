@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from copy import copy
 from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
@@ -57,6 +58,13 @@ SEM_DEPARTMENT_REPORT_ALIASES = {
     "DSPL": "DSLE",
 }
 
+FACULTY_STATUS_SOURCE = (
+    Path(__file__).resolve().parents[3]
+    / "0_source_files"
+    / "0000_BuildingFiles"
+    / "source_AutoFill_names_v20261018.xlsx"
+)
+
 
 def _copy_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df.copy() if df is not None else pd.DataFrame()
@@ -78,6 +86,42 @@ def _safe_text(value: object) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _faculty_match_key(value: object) -> str:
+    """Normalize a faculty name for case- and whitespace-insensitive lookup."""
+    return " ".join(_safe_text(value).casefold().split())
+
+
+def _faculty_id_key(value: object) -> str:
+    text = _safe_text(value)
+    return re.sub(r"\.0$", "", text)
+
+
+def _salaried_faculty_lookup() -> tuple[set[str], set[str]]:
+    """Return salaried faculty names and IDs from the maintained source workbook."""
+    if not FACULTY_STATUS_SOURCE.exists():
+        return set(), set()
+    source = pd.read_excel(FACULTY_STATUS_SOURCE)
+    required_columns = {"Faculty Name", "salaried"}
+    if not required_columns.issubset(source.columns):
+        return set(), set()
+    salaried = source.loc[
+        source["salaried"].astype("string").str.strip().str.casefold().eq("salaried")
+    ].copy()
+    names = {_faculty_match_key(value) for value in salaried["Faculty Name"]}
+    ids = (
+        {_faculty_id_key(value) for value in salaried["ID#"]}
+        if "ID#" in salaried.columns
+        else set()
+    )
+    return names - {""}, ids - {""}
+
+
+def _is_salaried_faculty(name: object, faculty_ids: pd.Series, salaried_names: set[str], salaried_ids: set[str]) -> bool:
+    if _faculty_match_key(name) in salaried_names:
+        return True
+    return any(_faculty_id_key(value) in salaried_ids for value in faculty_ids.dropna())
 
 
 def _program_equals(series: pd.Series, program: str) -> pd.Series:
@@ -258,6 +302,7 @@ def _academic_year_semesters(series: pd.Series) -> list[str]:
 
 def _department_cycle_semesters(series: pd.Series) -> list[str]:
     values = [str(value).strip() for value in series.dropna().tolist() if str(value).strip()]
+    values = [value for value in values if _academic_year_sort_key(value)[0] != 9999]
     if not values:
         return []
     starts = [_academic_year_sort_key(value)[0] for value in values]
@@ -270,6 +315,10 @@ def _department_cycle_semesters(series: pd.Series) -> list[str]:
 def _latest_department_cycle_semesters(series: pd.Series) -> list[str]:
     """Return the most recent Summer/Fall/Spring cycle represented in the data."""
     values = [str(value).strip() for value in series.dropna().tolist() if str(value).strip()]
+    # Labels such as "Term not set" belong in the detail reports, but they
+    # must not be considered an academic year when choosing the schedule
+    # cycle.  Their sort key intentionally uses year 9999.
+    values = [value for value in values if _academic_year_sort_key(value)[0] != 9999]
     if not values:
         return []
     start_year = max(_academic_year_sort_key(value)[0] for value in values)
@@ -1950,18 +1999,30 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
         cell.border = Border(bottom=thin_bottom)
 
     faculty_rows = all_cycle_rows.loc[all_cycle_rows["Faculty Name"].notna() & all_cycle_rows["Faculty Name"].ne("")].copy()
-    faculty_names = sorted(_string_column(faculty_rows, "Faculty Name").dropna().unique().tolist(), key=lambda value: str(value).casefold())
+    salaried_names, salaried_ids = _salaried_faculty_lookup()
+    faculty_entries: list[tuple[str, bool]] = []
+    for faculty_name in _string_column(faculty_rows, "Faculty Name").dropna().unique().tolist():
+        person_rows = faculty_rows.loc[faculty_rows["Faculty Name"].eq(faculty_name)]
+        faculty_ids = person_rows["ID#"] if "ID#" in person_rows.columns else pd.Series(dtype="string")
+        faculty_entries.append(
+            (
+                faculty_name,
+                _is_salaried_faculty(faculty_name, faculty_ids, salaried_names, salaried_ids),
+            )
+        )
+    # Salaried faculty must appear first; each group is alphabetized by name.
+    faculty_entries.sort(key=lambda entry: (not entry[1], str(entry[0]).casefold()))
     row_number = faculty_header_row + 1
-    for faculty_name in faculty_names:
+    for faculty_name, is_salaried in faculty_entries:
         person_rows = faculty_rows.loc[faculty_rows["Faculty Name"].eq(faculty_name)]
         load_credits = _safe_sum(person_rows.loc[person_rows["load/contract"].eq("load"), "Cr."])
         contract_credits = _safe_sum(person_rows.loc[person_rows["load/contract"].eq("contract"), "Cr."])
         if not load_credits and not contract_credits:
             continue
         ws.cell(row_number, 2, faculty_name)
-        # Columns C through E intentionally remain blank for the department
-        # secretary to choose employment status and enter the reduction reason
-        # and approved load/policy.
+        ws.cell(row_number, 3, "salaried" if is_salaried else "non-salaried")
+        # Columns D and E intentionally remain blank for the department
+        # secretary to enter the reduction reason and approved load/policy.
         ws.cell(row_number, 6, load_credits)
         ws.cell(row_number, 7, contract_credits)
         ws.cell(row_number, 8, f"=SUM(F{row_number}:G{row_number})")
