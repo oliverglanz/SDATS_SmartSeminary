@@ -1964,21 +1964,22 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
     header_fill = PatternFill("solid", fgColor="D9EAF7")
     thin_bottom = Side(style="thin", color="7F7F7F")
     medium_bottom = Side(style="medium", color="000000")
+    medium_top = Side(style="medium", color="000000")
 
     for offset, semester in enumerate(semesters, start=9):
         ws.cell(offset, 2, f"Credits on {semester} schedule").font = Font(name="Arial", size=10, bold=True)
-        ws.cell(offset, 6, _safe_sum(all_cycle_rows.loc[all_cycle_rows["Semester"].eq(semester), "Cr."]))
-        ws.cell(offset, 6).number_format = credit_format
-        ws.cell(offset, 6).fill = aqua_blue_fill
-        ws.cell(offset, 6).alignment = Alignment(horizontal="right")
-        ws.cell(offset, 6).border = Border(bottom=thin_bottom)
+        ws.cell(offset, 3, _safe_sum(all_cycle_rows.loc[all_cycle_rows["Semester"].eq(semester), "Cr."]))
+        ws.cell(offset, 3).number_format = credit_format
+        ws.cell(offset, 3).fill = aqua_blue_fill
+        ws.cell(offset, 3).alignment = Alignment(horizontal="right")
+        ws.cell(offset, 3).border = Border(bottom=thin_bottom)
     total_summary_row = 9 + len(semesters)
     ws.cell(total_summary_row, 2, "Total proposed credits offered for the year").font = Font(name="Arial", size=10, bold=True)
-    ws.cell(total_summary_row, 6, f"=SUM(F9:F{total_summary_row - 1})" if semesters else 0)
-    ws.cell(total_summary_row, 6).number_format = credit_format
-    ws.cell(total_summary_row, 6).fill = aqua_blue_fill
-    ws.cell(total_summary_row, 6).alignment = Alignment(horizontal="right")
-    ws.cell(total_summary_row, 6).font = Font(name="Arial", size=10, bold=True)
+    ws.cell(total_summary_row, 3, f"=SUM(C9:C{total_summary_row - 1})" if semesters else 0)
+    ws.cell(total_summary_row, 3).number_format = credit_format
+    ws.cell(total_summary_row, 3).fill = aqua_blue_fill
+    ws.cell(total_summary_row, 3).alignment = Alignment(horizontal="right")
+    ws.cell(total_summary_row, 3).font = Font(name="Arial", size=10, bold=True)
 
     faculty_header_row = total_summary_row + 3
     faculty_headers = [
@@ -2051,14 +2052,16 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
     for total_row, label, status in total_rows:
         ws.cell(total_row, 2, label).font = Font(name="Arial", size=10, bold=True)
         formula = f'=SUMIF(C{first_faculty_row}:C{last_faculty_row},"{status}",H{first_faculty_row}:H{last_faculty_row})'
-        ws.cell(total_row, 8, formula if last_faculty_row >= first_faculty_row else 0)
-        ws.cell(total_row, 8).number_format = credit_format
-        ws.cell(total_row, 8).font = Font(name="Arial", size=10, bold=True)
+        ws.cell(total_row, 3, formula if last_faculty_row >= first_faculty_row else 0)
+        ws.cell(total_row, 3).number_format = credit_format
+        ws.cell(total_row, 3).font = Font(name="Arial", size=10, bold=True)
 
     ws.cell(faculty_total_row, 2, "Proposed total credits").font = Font(name="Arial", size=10, bold=True)
-    ws.cell(faculty_total_row, 8, f"=SUM(H{salaried_total_row}:H{non_salaried_total_row})")
-    ws.cell(faculty_total_row, 8).number_format = credit_format
-    ws.cell(faculty_total_row, 8).font = Font(name="Arial", size=10, bold=True)
+    ws.cell(faculty_total_row, 3, f"=SUM(C{salaried_total_row}:C{non_salaried_total_row})")
+    ws.cell(faculty_total_row, 3).number_format = credit_format
+    ws.cell(faculty_total_row, 3).font = Font(name="Arial", size=10, bold=True)
+    for column in range(2, 10):
+        ws.cell(salaried_total_row, column).border = Border(top=medium_top)
 
     row_number = faculty_total_row + 4
     ws.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=9)
@@ -2067,6 +2070,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
     contract_header_row = row_number
     contract_headers = [
         "Instructor and Course",
+        "salaried/non-salaried",
         "Mode / Location",
         "Credits Taught",
         "Rate per Credit",
@@ -2083,7 +2087,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
 
     def write_contract_section(section_title: str, rows: pd.DataFrame, start_row: int) -> tuple[int, int, int]:
         section_start = start_row
-        ws.merge_cells(start_row=start_row, start_column=2, end_row=start_row, end_column=7)
+        ws.merge_cells(start_row=start_row, start_column=2, end_row=start_row, end_column=8)
         section_cell = ws.cell(start_row, 2, section_title)
         section_cell.font = Font(name="Arial", size=10, bold=True)
         section_cell.fill = summary_fill
@@ -2099,28 +2103,33 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
             start_row += 1
             for _, contract_row in semester_rows.iterrows():
                 ws.cell(start_row, 2, " ".join(part for part in [_safe_text(contract_row.get("Faculty Name")), _course_schedule_label(contract_row)] if part))
-                ws.cell(start_row, 3, " ".join(part for part in [_safe_text(contract_row.get("Mode")), _location_abbreviation(contract_row.get("Location"))] if part))
-                ws.cell(start_row, 4, contract_row.get("Cr."))
-                ws.cell(start_row, 5, contract_row.get("rate per credit"))
-                ws.cell(start_row, 6, f"=D{start_row}*E{start_row}")
-                ws.cell(start_row, 7, f"=F{start_row}")
-                for column in range(2, 8):
+                contract_ids = pd.Series([contract_row.get("ID#")], dtype="object")
+                is_salaried = _is_salaried_faculty(
+                    contract_row.get("Faculty Name"), contract_ids, salaried_names, salaried_ids
+                )
+                ws.cell(start_row, 3, "salaried" if is_salaried else "non-salaried")
+                ws.cell(start_row, 4, " ".join(part for part in [_safe_text(contract_row.get("Mode")), _location_abbreviation(contract_row.get("Location"))] if part))
+                ws.cell(start_row, 5, contract_row.get("Cr."))
+                ws.cell(start_row, 6, contract_row.get("rate per credit"))
+                ws.cell(start_row, 7, f"=E{start_row}*F{start_row}")
+                ws.cell(start_row, 8, f"=G{start_row}")
+                for column in range(2, 9):
                     ws.cell(start_row, column).border = Border(bottom=thin_bottom)
-                ws.cell(start_row, 3).alignment = Alignment(horizontal="center")
-                ws.cell(start_row, 4).number_format = credit_format
-                for column in [5, 6, 7]:
+                ws.cell(start_row, 4).alignment = Alignment(horizontal="center")
+                ws.cell(start_row, 5).number_format = credit_format
+                for column in [6, 7, 8]:
                     ws.cell(start_row, column).number_format = currency_format
                 start_row += 1
         subtotal_row = start_row
-        ws.cell(subtotal_row, 3, f"Total {section_title}")
-        ws.cell(subtotal_row, 3).font = Font(name="Arial", size=10, bold=True)
-        for column in [4, 6, 7]:
+        ws.cell(subtotal_row, 4, f"Total {section_title}")
+        ws.cell(subtotal_row, 4).font = Font(name="Arial", size=10, bold=True)
+        for column in [5, 7, 8]:
             column_letter = get_column_letter(column)
             ws.cell(subtotal_row, column, f"=SUM({column_letter}{first_detail_row}:{column_letter}{subtotal_row - 1})" if subtotal_row > first_detail_row else 0)
             ws.cell(subtotal_row, column).font = Font(name="Arial", size=10, bold=True)
             ws.cell(subtotal_row, column).border = Border(bottom=medium_bottom)
-        ws.cell(subtotal_row, 4).number_format = credit_format
-        for column in [6, 7]:
+        ws.cell(subtotal_row, 5).number_format = credit_format
+        for column in [7, 8]:
             ws.cell(subtotal_row, column).number_format = currency_format
         return subtotal_row + 2, subtotal_row, section_start
 
@@ -2134,20 +2143,20 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
     row_number, on_campus_total_row, _ = write_contract_section("On Campus Contracts", on_campus, row_number)
     row_number, extension_total_row, _ = write_contract_section("Extension School Classes", extension, row_number)
 
-    ws.cell(row_number, 3, "Total Contracts")
-    ws.cell(row_number, 3).font = Font(name="Arial", size=11, bold=True)
-    for column in [4, 6, 7]:
+    ws.cell(row_number, 4, "Total Contracts")
+    ws.cell(row_number, 4).font = Font(name="Arial", size=11, bold=True)
+    for column in [5, 7, 8]:
         column_letter = get_column_letter(column)
         ws.cell(row_number, column, f"={column_letter}{on_campus_total_row}+{column_letter}{extension_total_row}")
         ws.cell(row_number, column).font = Font(name="Arial", size=11, bold=True)
         ws.cell(row_number, column).border = Border(bottom=medium_bottom)
-    ws.cell(row_number, 4).number_format = credit_format
-    for column in [6, 7]:
+    ws.cell(row_number, 5).number_format = credit_format
+    for column in [7, 8]:
         ws.cell(row_number, column).number_format = currency_format
 
     for detail_row in range(contract_header_row, row_number + 1):
-        ws.cell(detail_row, 6).fill = aqua_blue_fill
-        ws.cell(detail_row, 7).fill = light_green_fill
+        ws.cell(detail_row, 7).fill = aqua_blue_fill
+        ws.cell(detail_row, 8).fill = light_green_fill
 
     for column, width in {
         "A": 3,
@@ -2202,6 +2211,13 @@ def generate_department_overview_bundle(
             _set_schedule_class_column_widths(workbook["SYNC Schedule"], 28)
     _add_department_budget_course_schedule(workbook, working, department)
     _add_department_contracts_sheet(workbook, working, department)
+    # Put the two department planning sheets first so recipients see the
+    # actionable contracts and teaching schedule before the report tabs.
+    first_sheets = [f"{department} CONTRACTS"[:31], "Budget Course Schedule A-B"]
+    for target_index, sheet_name in enumerate(first_sheets):
+        if sheet_name in workbook.sheetnames:
+            worksheet = workbook[sheet_name]
+            workbook.move_sheet(worksheet, offset=target_index - workbook.index(worksheet))
     combined_buffer = BytesIO()
     workbook.save(combined_buffer)
     preview_df = sheets["report_001a"]
@@ -2209,7 +2225,7 @@ def generate_department_overview_bundle(
         report_name=f"{department} Department Overview Reports",
         preview_df=preview_df,
         excel_bytes=combined_buffer.getvalue(),
-        output_filename=f"{department}_department_overview_reports_demo.xlsx",
+        output_filename=f"{department}_department_overview_reports.xlsx",
         worksheet_name="report_001a",
         metadata={"department": department, "sheet_count": str(len(workbook.sheetnames))},
     )
