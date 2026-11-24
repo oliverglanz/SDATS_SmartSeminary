@@ -98,9 +98,13 @@ def generate_schedule_outputs_from_payloads(
     weekly_room_order: list[str] | None = None,
     weekly_class_column_width: int | float | None = None,
     sync_class_column_width: int | float | None = None,
+    excluded_sem_departments: set[str] | None = None,
 ) -> ScheduleGenerationResult:
     frames = [_load_raw_donsheet(uploaded_bytes) for _, uploaded_bytes in payloads]
     df = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+    if excluded_sem_departments and "SEM Department {Scacrse Dept}" in df.columns:
+        codes = df["SEM Department {Scacrse Dept}"].astype("string").str.strip().str.upper()
+        df = df.loc[~codes.isin({code.upper() for code in excluded_sem_departments})].copy()
     df = _filter_department(df, department)
     return _generate_schedule_outputs_from_df(
         source_name,

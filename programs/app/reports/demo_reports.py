@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
+from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -2023,7 +2024,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
 
     currency_format = '"$"#,##0.00;[Red]("$"#,##0.00);-'
     credit_format = '#,##0.0;(#,##0.0);-'
-    signed_credit_format = '#,##0.0;-#,##0.0;-'
+    signed_credit_format = '+#,##0.##;-#,##0.##;0'
     aqua_blue_fill = PatternFill("solid", fgColor="00FFFF")
     light_green_fill = PatternFill("solid", fgColor="CCFF90")
     summary_fill = PatternFill("solid", fgColor="D9EAF7")
@@ -2093,7 +2094,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
         ws.cell(row_number, 6, load_credits)
         ws.cell(row_number, 7, contract_credits)
         ws.cell(row_number, 8, f"=SUM(F{row_number}:G{row_number})")
-        ws.cell(row_number, 9, f"=E{row_number}-H{row_number}")
+        ws.cell(row_number, 9, f'=IF(E{row_number}="","",F{row_number}-E{row_number})')
         for column in [6, 7, 8, 9]:
             ws.cell(row_number, column).number_format = credit_format
             ws.cell(row_number, column).alignment = Alignment(horizontal="center")
@@ -2103,6 +2104,10 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
     first_faculty_row = faculty_header_row + 1
     last_faculty_row = row_number - 1
     if last_faculty_row >= first_faculty_row:
+        ws.conditional_formatting.add(
+            f"G{first_faculty_row}:G{last_faculty_row}",
+            CellIsRule(operator="greaterThan", formula=["4"], font=Font(color="FF0000", bold=True)),
+        )
         status_validation = DataValidation(type="list", formula1='"salaried,non-salaried"', allow_blank=True)
         status_validation.error = "Choose salaried or non-salaried."
         status_validation.errorTitle = "Invalid employment status"
@@ -2256,7 +2261,11 @@ def generate_department_overview_bundle(
     department: str,
     donsheet_payloads: list[tuple[str, bytes]] | None = None,
 ) -> ReportResult:
-    working = _filter_department(_prep_working_df(df), department)
+    source = _copy_frame(df)
+    if "SEM Department" in source.columns:
+        sem_department = source["SEM Department"].astype("string").str.strip().str.upper()
+        source = source.loc[~sem_department.eq("BRI").fillna(False)].copy()
+    working = _filter_department(_prep_working_df(source), department)
     sheets = {
         "report_001a": _overview_report_001a(working),
         "report_001b": _overview_report_001b(working),
@@ -2266,7 +2275,7 @@ def generate_department_overview_bundle(
         "report_003a": _overview_report_003a(working),
     }
     workbook_bytes = workbook_to_excel_bytes(sheets, style_plan={key: key for key in sheets})
-    contracts_report = generate_department_contracts_overview_report(df, department)
+    contracts_report = generate_department_contracts_overview_report(source, department)
     workbook = load_workbook(BytesIO(workbook_bytes))
     contracts_workbook = load_workbook(BytesIO(contracts_report.excel_bytes))
     _clone_sheet_into_workbook(contracts_workbook.active, workbook, "ContractsOverview")
@@ -2278,6 +2287,7 @@ def generate_department_overview_bundle(
             weekly_room_order=DEPARTMENT_ADMIN_WEEKLY_ROOMS,
             weekly_class_column_width=DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
             sync_class_column_width=28,
+            excluded_sem_departments={"BRI"},
         )
         schedule_workbook = load_workbook(BytesIO(schedule_report.excel_bytes))
         for sheet_name in ["Weekly Schedule", "SYNC Schedule", "ASYNC Classes"]:
