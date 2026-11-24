@@ -1821,103 +1821,157 @@ def _add_department_budget_course_schedule(workbook, working: pd.DataFrame, depa
     off_campus_font = Font(name="Arial", size=10, color="FF0000")
     thin_border = Border(bottom=Side(style="thin", color="B7B7B7"))
 
-    ws.merge_cells("A4:A5")
-    ws["A4"] = "Faculty Name"
-    ws["A4"].fill = header_fill
+    # The load and contract schedules are separate sections.  Use the same
+    # visual treatment as the Faculty Name header to make each section clear.
+    for column in range(1, total_column + 1):
+        ws.cell(4, column).fill = header_fill
+    ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=total_column)
+    ws["A4"] = "Load Teachers:"
     ws["A4"].font = header_font
-    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["A4"].alignment = Alignment(horizontal="left", vertical="center")
+
+    ws.merge_cells("A5:A6")
+    ws["A5"] = "Faculty Name"
+    ws["A5"].fill = header_fill
+    ws["A5"].font = header_font
+    ws["A5"].alignment = Alignment(horizontal="center", vertical="center")
 
     for layout in semester_layouts:
         semester = layout["semester"]
         start_column = layout["start_column"]
         labels = layout["labels"]
         end_column = start_column + len(labels) - 1
-        ws.merge_cells(start_row=4, start_column=start_column, end_row=4, end_column=end_column)
-        semester_header = ws.cell(4, start_column, semester)
+        ws.merge_cells(start_row=5, start_column=start_column, end_row=5, end_column=end_column)
+        semester_header = ws.cell(5, start_column, semester)
         season = semester.split(" ", 1)[0].lower()
         semester_fill = semester_fills.get(season, header_fill)
         semester_header.fill = semester_fill
         semester_header.font = semester_header_font
         semester_header.alignment = Alignment(horizontal="center", vertical="center")
         for column, label in enumerate(labels, start=start_column):
-            cell = ws.cell(5, column, label)
+            cell = ws.cell(6, column, label)
             cell.fill = semester_fill
             cell.font = semester_header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    ws.merge_cells(start_row=4, start_column=total_column, end_row=5, end_column=total_column)
-    total_header = ws.cell(4, total_column, "Total Cr.")
+    ws.merge_cells(start_row=5, start_column=total_column, end_row=6, end_column=total_column)
+    total_header = ws.cell(5, total_column, "Total Cr.")
     total_header.fill = header_fill
     total_header.font = header_font
     total_header.alignment = Alignment(horizontal="center", vertical="center")
 
-    faculty_names = sorted(
-        _string_column(schedule, "Faculty Name").dropna().unique().tolist(),
-        key=lambda value: str(value).casefold(),
-    )
-    current_row = 6
-    for faculty_name in faculty_names:
-        faculty_rows = schedule.loc[_string_column(schedule, "Faculty Name").eq(faculty_name)].copy()
-        semester_rows = {
-            semester: faculty_rows.loc[faculty_rows["Semester"].eq(semester)].sort_values(
-                ["Course Text", "Catalog Title"], na_position="last"
-            )
-            for semester in semesters
-        }
-        course_row_count = max(len(rows) for rows in semester_rows.values())
-        course_start_row = current_row + 1
-        course_end_row = current_row + course_row_count
+    current_row = 7
+    def write_faculty_section(section: pd.DataFrame, start_row: int) -> int:
+        faculty_names = sorted(
+            _string_column(section, "Faculty Name").dropna().unique().tolist(),
+            key=lambda value: str(value).casefold(),
+        )
+        current = start_row
+        for faculty_name in faculty_names:
+            faculty_rows = section.loc[_string_column(section, "Faculty Name").eq(faculty_name)].copy()
+            semester_rows = {
+                semester: faculty_rows.loc[faculty_rows["Semester"].eq(semester)].sort_values(
+                    ["Course Text", "Catalog Title"], na_position="last"
+                )
+                for semester in semesters
+            }
+            course_row_count = max(len(rows) for rows in semester_rows.values())
+            course_start_row = current + 1
+            course_end_row = current + course_row_count
 
-        for column in range(1, total_column + 1):
-            cell = ws.cell(current_row, column)
-            cell.fill = faculty_fill
-            cell.font = faculty_font
-            cell.border = thin_border
-        ws.cell(current_row, 1, faculty_name)
+            for column in range(1, total_column + 1):
+                cell = ws.cell(current, column)
+                cell.fill = faculty_fill
+                cell.font = faculty_font
+                cell.border = thin_border
+            ws.cell(current, 1, faculty_name)
 
-        total_cells: list[str] = []
-        for layout in semester_layouts:
-            semester = layout["semester"]
-            credit_column = layout["credit_column"]
-            credit_cell = ws.cell(current_row, credit_column)
-            if not semester_rows[semester].empty:
-                credit_cell.value = f"=SUM({get_column_letter(credit_column)}{course_start_row}:{get_column_letter(credit_column)}{course_end_row})"
-                total_cells.append(credit_cell.coordinate)
-            credit_cell.number_format = "0.##"
-            credit_cell.alignment = Alignment(horizontal="center")
-        ws.cell(current_row, total_column).value = f"=SUM({','.join(total_cells)})" if total_cells else 0
-        ws.cell(current_row, total_column).number_format = "0.##"
-        ws.cell(current_row, total_column).alignment = Alignment(horizontal="center")
-
-        for offset in range(course_row_count):
-            target_row = course_start_row + offset
+            total_cells: list[str] = []
             for layout in semester_layouts:
                 semester = layout["semester"]
-                entries = semester_rows[semester]
-                if offset >= len(entries):
-                    continue
-                entry = entries.iloc[offset]
-                start_column = layout["start_column"]
-                values = [_course_schedule_label(entry)]
-                if layout["is_summer"]:
-                    values.extend(_summer_part_of_term_marker(entry, term_number) for term_number in range(1, 4))
-                values.extend(
-                    [
-                        _safe_text(entry.get("Mode")),
-                        _location_abbreviation(entry.get("Location")),
-                        _safe_text(entry.get("Program")),
-                        entry.get("Cr."),
-                    ]
-                )
-                for column, value in enumerate(values, start=start_column):
-                    cell = ws.cell(target_row, column, value)
-                    cell.alignment = Alignment(vertical="top", wrap_text=column == start_column)
-                    if _is_off_campus_teaching_appointment(entry):
-                        cell.font = off_campus_font
-                    if column == layout["credit_column"]:
-                        cell.number_format = "0.##"
-                        cell.alignment = Alignment(horizontal="center", vertical="top")
-        current_row = course_end_row + 2
+                credit_column = layout["credit_column"]
+                credit_cell = ws.cell(current, credit_column)
+                if not semester_rows[semester].empty:
+                    credit_cell.value = f"=SUM({get_column_letter(credit_column)}{course_start_row}:{get_column_letter(credit_column)}{course_end_row})"
+                    total_cells.append(credit_cell.coordinate)
+                credit_cell.number_format = "0.##"
+                credit_cell.alignment = Alignment(horizontal="center")
+            ws.cell(current, total_column).value = f"=SUM({','.join(total_cells)})" if total_cells else 0
+            ws.cell(current, total_column).number_format = "0.##"
+            ws.cell(current, total_column).alignment = Alignment(horizontal="center")
+
+            for offset in range(course_row_count):
+                target_row = course_start_row + offset
+                for layout in semester_layouts:
+                    semester = layout["semester"]
+                    entries = semester_rows[semester]
+                    if offset >= len(entries):
+                        continue
+                    entry = entries.iloc[offset]
+                    start_column = layout["start_column"]
+                    values = [_course_schedule_label(entry)]
+                    if layout["is_summer"]:
+                        values.extend(_summer_part_of_term_marker(entry, term_number) for term_number in range(1, 4))
+                    values.extend(
+                        [
+                            _safe_text(entry.get("Mode")),
+                            _location_abbreviation(entry.get("Location")),
+                            _safe_text(entry.get("Program")),
+                            entry.get("Cr."),
+                        ]
+                    )
+                    for column, value in enumerate(values, start=start_column):
+                        cell = ws.cell(target_row, column, value)
+                        cell.alignment = Alignment(vertical="top", wrap_text=column == start_column)
+                        if _is_off_campus_teaching_appointment(entry):
+                            cell.font = off_campus_font
+                        if column == layout["credit_column"]:
+                            cell.number_format = "0.##"
+                            cell.alignment = Alignment(horizontal="center", vertical="top")
+            current = course_end_row + 2
+        return current
+
+    load_schedule = schedule.loc[schedule["load/contract"].eq("load")].copy()
+    contract_schedule = schedule.loc[schedule["load/contract"].eq("contract")].copy()
+    current_row = write_faculty_section(load_schedule, current_row)
+    if not contract_schedule.empty:
+        # The intentionally unused row above the heading stays white as a
+        # visual break between load and contract teachers.
+        for column in range(1, total_column + 1):
+            ws.cell(current_row - 1, column).fill = PatternFill(fill_type=None)
+        for column in range(1, total_column + 1):
+            ws.cell(current_row, column).fill = header_fill
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=total_column)
+        contract_heading = ws.cell(current_row, 1, "Contract Teachers:")
+        contract_heading.font = Font(name="Arial", size=11, bold=True, color="FF0000")
+        contract_heading.alignment = Alignment(horizontal="left", vertical="center")
+
+        # Repeat the two schedule-header rows for the contract section.
+        contract_header_row = current_row + 1
+        for source_row, target_row in [(5, contract_header_row), (6, contract_header_row + 1)]:
+            for column in range(1, total_column + 1):
+                source_cell = ws.cell(source_row, column)
+                target_cell = ws.cell(target_row, column)
+                target_cell._style = copy(source_cell._style)
+                if source_cell.value is not None:
+                    target_cell.value = source_cell.value
+        ws.merge_cells(start_row=contract_header_row, start_column=1, end_row=contract_header_row + 1, end_column=1)
+        for layout in semester_layouts:
+            start_column = layout["start_column"]
+            end_column = start_column + len(layout["labels"]) - 1
+            ws.merge_cells(
+                start_row=contract_header_row,
+                start_column=start_column,
+                end_row=contract_header_row,
+                end_column=end_column,
+            )
+        ws.merge_cells(
+            start_row=contract_header_row,
+            start_column=total_column,
+            end_row=contract_header_row + 1,
+            end_column=total_column,
+        )
+        current_row = write_faculty_section(contract_schedule, contract_header_row + 2)
 
     last_filled_row = current_row - 2
     for layout in semester_layouts:
@@ -1925,10 +1979,10 @@ def _add_department_budget_course_schedule(workbook, working: pd.DataFrame, depa
         season = semester.split(" ", 1)[0].lower()
         credit_fill = semester_fills.get(season, header_fill)
         credit_column = layout["credit_column"]
-        for row_number in range(4, last_filled_row + 1):
+        for row_number in range(5, last_filled_row + 1):
             ws.cell(row_number, credit_column).fill = credit_fill
 
-    ws.freeze_panes = "B6"
+    ws.freeze_panes = "B7"
     ws.column_dimensions["A"].width = 24
     for layout in semester_layouts:
         start_column = layout["start_column"]
