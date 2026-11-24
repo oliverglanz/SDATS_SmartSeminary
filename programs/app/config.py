@@ -47,15 +47,15 @@ ROLE_PASSWORDS = {
     "Shari": os.getenv("SMART_SEMINARY_PASSWORD_SHARI", "irahS"),
 }
 DEPARTMENT_OPTIONS = [
-    "OTST",
-    "NTST",
-    "THST",
-    "MSSN",
     "CHIS",
+    "DMIN",
     "DSLE",
     "GSEM",
-    "PATH",
     "MA_Religion",
-    "DMIN",
     "MDivHISP_MAPmENGL_MAPmHISP",
+    "MSSN",
+    "NTST",
+    "OTST",
+    "PATH",
+    "THST",
 ]
