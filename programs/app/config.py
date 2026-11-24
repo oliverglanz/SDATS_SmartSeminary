@@ -26,6 +26,14 @@ DEFAULT_PORT = _get_env_int("SMART_SEMINARY_PORT", 8501)
 ENABLE_CLOSE_BUTTON = _get_env_bool("SMART_SEMINARY_ENABLE_CLOSE_BUTTON", True)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEPARTMENT_ALIASES = {"PTDS": "PATH", "PTDI": "PATH", "THCP": "THST", "WMIS": "MSSN", "DSPL": "DSLE"}
+
+
+def canonical_department(value: object) -> str:
+    text = str(value).strip()
+    return DEPARTMENT_ALIASES.get(text.upper(), text)
+
+
 DEFAULT_DONSHEET_PATH = (
     PROJECT_ROOT
     / "0_source_files"

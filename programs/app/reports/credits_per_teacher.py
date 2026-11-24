@@ -113,7 +113,9 @@ def _dataframe_to_styled_excel_bytes(dataframe: pd.DataFrame, sheet_name: str) -
 
 def generate_credits_per_teacher_report(df: pd.DataFrame, department: str) -> ReportResult:
     working = df.copy()
+    from ..config import DEPARTMENT_ALIASES
     working["SEM Department"] = working["SEM Department"].astype("string").str.strip()
+    working["SEM Department"] = working["SEM Department"].str.upper().map(DEPARTMENT_ALIASES).fillna(working["SEM Department"])
     working["Faculty Name"] = working["Faculty Name"].astype("string").str.strip()
     working["Subject"] = working.get("Subject", pd.Series(index=working.index, dtype="string")).astype("string").str.strip()
     working["Course Number"] = (

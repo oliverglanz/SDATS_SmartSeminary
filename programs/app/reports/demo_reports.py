@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from ..excel_utils import workbook_to_excel_bytes
+from ..config import DEPARTMENT_ALIASES
 from ..models import ReportBundle, ReportResult
 from ..schedule_from_donsheet import (
     DEPARTMENT_ADMIN_SCHEDULE_COLUMN_WIDTH,
@@ -52,11 +53,7 @@ DEFAULT_DEPARTMENT_ORDER = [
 
 # Legacy Banner department codes that should roll up under the current SEM
 # department in all budget reports.
-SEM_DEPARTMENT_REPORT_ALIASES = {
-    "WMIS": "MSSN",
-    "THCP": "THST",
-    "DSPL": "DSLE",
-}
+SEM_DEPARTMENT_REPORT_ALIASES = DEPARTMENT_ALIASES
 
 FACULTY_STATUS_SOURCE = (
     Path(__file__).resolve().parents[3]
@@ -156,8 +153,9 @@ def _prep_working_df(df: pd.DataFrame, *, department_from_sem: bool = False) -> 
     # when their DonSheet start date is not set.  A visible label lets the
     # department correct the date while preserving the reported credits/costs.
     working["Semester"] = working["Semester"].fillna("Term not set")
-    sem_department_alias = working["SEM Department"].str.upper().map(SEM_DEPARTMENT_REPORT_ALIASES)
-    working["SEM Department"] = sem_department_alias.fillna(working["SEM Department"])
+    for column in ["Department", "SEM Department"]:
+        aliases = working[column].str.upper().map(SEM_DEPARTMENT_REPORT_ALIASES)
+        working[column] = aliases.fillna(working[column])
     working["load/contract"] = _string_column(working, "load/contract").str.lower().fillna("")
     working["Cr."] = _numeric_column(working, "Cr.").fillna(0)
     working["rate per credit"] = _numeric_column(working, "rate per credit").fillna(0)

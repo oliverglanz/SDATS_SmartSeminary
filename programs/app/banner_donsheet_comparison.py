@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 from app.io_donsheet import normalize_donsheet_headers
+from app.config import canonical_department
 
 
 OUTPUT_FILENAME = "ColorReport_SEM_course_updates.xlsx"
@@ -302,9 +303,9 @@ def generate_banner_donsheet_comparison(
     working[BASE_KEY] = _normalize_key(working[BASE_KEY])
     working = working[working[BASE_KEY].notna()].copy()
     if department is not None:
-        department = str(department).strip()
-        sheet_names = [name for name in sheet_names if name == department]
-        working = working[working["_SheetName"].eq(department)].copy()
+        department = canonical_department(department)
+        sheet_names = [name for name in sheet_names if canonical_department(name) == department]
+        working = working[working["_SheetName"].isin(sheet_names)].copy()
         if working.empty:
             raise ValueError(f"The DonSheet does not contain usable course rows for department '{department}'.")
     # Banner exports include the entire university.  The notebook report limits

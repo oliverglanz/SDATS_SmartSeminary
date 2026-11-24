@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A2, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from .config import DEPARTMENT_ALIASES, canonical_department
 
 
 IGNORE_SHEETS = {"DropDownMenu", "InstructorMap", "_names_lookup", "_courses_lookup"}
@@ -177,7 +178,7 @@ def _generate_schedule_outputs_from_df(
 def _filter_department(df: pd.DataFrame, department: str | None) -> pd.DataFrame:
     if df.empty or not department:
         return df
-    department_value = str(department).strip()
+    department_value = canonical_department(department)
     if not department_value:
         return df
     department_columns = [
@@ -186,7 +187,7 @@ def _filter_department(df: pd.DataFrame, department: str | None) -> pd.DataFrame
         "Department",
     ]
     masks = [
-        df[column].astype("string").str.strip().eq(department_value).fillna(False)
+        df[column].astype("string").str.strip().str.upper().replace(DEPARTMENT_ALIASES).eq(department_value.upper()).fillna(False)
         for column in department_columns
         if column in df.columns
     ]
@@ -971,7 +972,7 @@ def _write_schedule_sheet(
             sheet.set_row(current_row, 22)
             current_row += 1
             continue
-        block_df = slots[slots["Block"] == block].copy().sort_values(["Start", "Room", "Course Codes"]) if not slots.empty else pd.DataFrame()
+        block_df = slots[slots["Block"] == block].copy().sort_values(["Start", "Room", "Course Codes"]) if not slots.empty else slots.copy()
         room_lists = {room: block_df[block_df["Room"] == room].to_dict("records") for room in rooms}
         max_len = max([len(v) for v in room_lists.values()] + [1])
         start_row = current_row
@@ -1410,7 +1411,7 @@ def _build_schedule_pdf_elements(
             data.append([Paragraph(block, label_style), Paragraph(special_rows[block], special_style), *["" for _ in range(max(len(rooms) - 1, 0))]])
             row_styles.append((len(data) - 1, "special"))
             continue
-        block_df = slots[slots["Block"] == block].copy().sort_values(["Start", "Room", "Course Codes"]) if not slots.empty else pd.DataFrame()
+        block_df = slots[slots["Block"] == block].copy().sort_values(["Start", "Room", "Course Codes"]) if not slots.empty else slots.copy()
         room_lists = {room: block_df[block_df["Room"] == room].to_dict("records") for room in rooms}
         max_len = max([len(v) for v in room_lists.values()] + [1])
         for slot_index in range(max_len):

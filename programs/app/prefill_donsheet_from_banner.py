@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.protection import SheetProtection
 
 from app.banner_donsheet_comparison import BANNER_RENAMES, SITE_NAMES
-from app.config import PROJECT_ROOT
+from app.config import DEPARTMENT_ALIASES, PROJECT_ROOT
 
 
 TEMPLATE_DIRECTORY = PROJECT_ROOT / "0_source_files" / "default_DonSheet"
@@ -119,7 +119,7 @@ def _filter_department_rows(banner: pd.DataFrame) -> dict[str, pd.DataFrame]:
     standard_departments = ["CHIS", "DSLE", "GSEM", "MSSN", "NTST", "PATH", "THST"]
     routed = {
         department: working.loc[
-            working["Subject"].eq(department) & outside_dmin_range & main_campus
+            working["Subject"].str.upper().replace(DEPARTMENT_ALIASES).eq(department) & outside_dmin_range & main_campus
         ].copy()
         for department in standard_departments
     }

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import pandas as pd
 
 from .io_donsheet import load_workbook, read_department_sheets, read_helper_sheet
+from .config import DEPARTMENT_ALIASES
 from .models import NormalizationResult, WorkbookSummary
 
 
@@ -276,6 +277,10 @@ def build_canonical_dataframe(source: str | bytes | object) -> NormalizationResu
         df["Department"] = sheet_name
         df = df.rename(columns=COLUMN_MAP)
         df = _clean_object_columns(df)
+        for department_column in ("Department", "SEM Department"):
+            if department_column in df.columns:
+                values = df[department_column].astype("string").str.strip()
+                df[department_column] = values.str.upper().map(DEPARTMENT_ALIASES).fillna(values)
 
         available_columns = [column for column in COLUMN_MAP.values() if column in df.columns]
         passthrough_columns = [column for column in raw_df.columns if column in df.columns]
