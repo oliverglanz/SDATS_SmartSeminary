@@ -8,6 +8,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from ..excel_utils import workbook_to_excel_bytes
 from ..models import ReportBundle, ReportResult
@@ -1871,6 +1872,233 @@ def _add_department_budget_course_schedule(workbook, working: pd.DataFrame, depa
     ws.column_dimensions[last_column_letter].width = 11
 
 
+def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department: str) -> None:
+    """Add the department's budget-request style contract schedule."""
+    sheet_name = f"{department} CONTRACTS"[:31]
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+    ws = workbook.create_sheet(sheet_name)
+    ws.sheet_view.showGridLines = False
+
+    source = working.copy()
+    for column in ["Semester", "load/contract", "Faculty Name", "Cr.", "rate per credit"]:
+        if column not in source.columns:
+            source[column] = pd.NA
+    semesters = _latest_department_cycle_semesters(source["Semester"]) if not source.empty else []
+    start_year = _academic_year_sort_key(semesters[0])[0] if semesters else None
+    period_label = f"May {start_year} - April {start_year + 1}" if start_year is not None else ""
+    all_cycle_rows = source.loc[source["Semester"].isin(semesters)].copy() if semesters else source.iloc[0:0].copy()
+    contract_rows = all_cycle_rows.loc[all_cycle_rows["load/contract"].eq("contract")].copy()
+
+    for row, text, italic in [
+        (2, "ANDREWS UNIVERSITY", False),
+        (3, "Budget Request", False),
+        (4, period_label, False),
+        (5, "SCHEDULE OF DETAILS", True),
+    ]:
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=9)
+        cell = ws.cell(row, 2, text)
+        cell.font = Font(name="Arial", size=11, bold=True, italic=italic)
+        cell.alignment = Alignment(horizontal="center")
+    ws["B7"] = f"{department} Department"
+    ws["B7"].font = Font(name="Arial", size=10, bold=True)
+
+    currency_format = '"$"#,##0.00;[Red]("$"#,##0.00);-'
+    credit_format = '#,##0.0;(#,##0.0);-'
+    aqua_blue_fill = PatternFill("solid", fgColor="00FFFF")
+    light_green_fill = PatternFill("solid", fgColor="CCFF90")
+    summary_fill = PatternFill("solid", fgColor="D9EAF7")
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    thin_bottom = Side(style="thin", color="7F7F7F")
+    medium_bottom = Side(style="medium", color="000000")
+
+    for offset, semester in enumerate(semesters, start=9):
+        ws.cell(offset, 2, f"Credits on {semester} schedule").font = Font(name="Arial", size=10, bold=True)
+        ws.cell(offset, 6, _safe_sum(all_cycle_rows.loc[all_cycle_rows["Semester"].eq(semester), "Cr."]))
+        ws.cell(offset, 6).number_format = credit_format
+        ws.cell(offset, 6).fill = aqua_blue_fill
+        ws.cell(offset, 6).alignment = Alignment(horizontal="right")
+        ws.cell(offset, 6).border = Border(bottom=thin_bottom)
+    total_summary_row = 9 + len(semesters)
+    ws.cell(total_summary_row, 2, "Total proposed credits offered for the year").font = Font(name="Arial", size=10, bold=True)
+    ws.cell(total_summary_row, 6, f"=SUM(F9:F{total_summary_row - 1})" if semesters else 0)
+    ws.cell(total_summary_row, 6).number_format = credit_format
+    ws.cell(total_summary_row, 6).fill = aqua_blue_fill
+    ws.cell(total_summary_row, 6).alignment = Alignment(horizontal="right")
+    ws.cell(total_summary_row, 6).font = Font(name="Arial", size=10, bold=True)
+
+    faculty_header_row = total_summary_row + 3
+    faculty_headers = [
+        "Faculty Name",
+        "salaried/non-salaried",
+        "Load Reduction Reason",
+        "Load/Policy",
+        "Load Credits",
+        "Contract Credits",
+        "Total Credits",
+        "Long/short of Load",
+    ]
+    for column, label in enumerate(faculty_headers, start=2):
+        cell = ws.cell(faculty_header_row, column, label)
+        cell.fill = header_fill
+        cell.font = Font(name="Arial", size=10, bold=True)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = Border(bottom=thin_bottom)
+
+    faculty_rows = all_cycle_rows.loc[all_cycle_rows["Faculty Name"].notna() & all_cycle_rows["Faculty Name"].ne("")].copy()
+    faculty_names = sorted(_string_column(faculty_rows, "Faculty Name").dropna().unique().tolist(), key=lambda value: str(value).casefold())
+    row_number = faculty_header_row + 1
+    for faculty_name in faculty_names:
+        person_rows = faculty_rows.loc[faculty_rows["Faculty Name"].eq(faculty_name)]
+        load_credits = _safe_sum(person_rows.loc[person_rows["load/contract"].eq("load"), "Cr."])
+        contract_credits = _safe_sum(person_rows.loc[person_rows["load/contract"].eq("contract"), "Cr."])
+        if not load_credits and not contract_credits:
+            continue
+        ws.cell(row_number, 2, faculty_name)
+        # Columns C through E intentionally remain blank for the department
+        # secretary to choose employment status and enter the reduction reason
+        # and approved load/policy.
+        ws.cell(row_number, 6, load_credits)
+        ws.cell(row_number, 7, contract_credits)
+        ws.cell(row_number, 8, f"=SUM(F{row_number}:G{row_number})")
+        ws.cell(row_number, 9, f"=E{row_number}-H{row_number}")
+        for column in [6, 7, 8, 9]:
+            ws.cell(row_number, column).number_format = credit_format
+            ws.cell(row_number, column).alignment = Alignment(horizontal="center")
+        row_number += 1
+
+    first_faculty_row = faculty_header_row + 1
+    last_faculty_row = row_number - 1
+    if last_faculty_row >= first_faculty_row:
+        status_validation = DataValidation(type="list", formula1='"salaried,non-salaried"', allow_blank=True)
+        status_validation.error = "Choose salaried or non-salaried."
+        status_validation.errorTitle = "Invalid employment status"
+        ws.add_data_validation(status_validation)
+        status_validation.add(f"C{first_faculty_row}:C{last_faculty_row}")
+
+    salaried_total_row = row_number
+    non_salaried_total_row = row_number + 1
+    faculty_total_row = row_number + 2
+    total_rows = [
+        (salaried_total_row, "Proposed credits to be taught by salaried Seminary faculty", "salaried"),
+        (non_salaried_total_row, "Proposed credits to be taught by non-salaried professors", "non-salaried"),
+    ]
+    for total_row, label, status in total_rows:
+        ws.cell(total_row, 2, label).font = Font(name="Arial", size=10, bold=True)
+        formula = f'=SUMIF(C{first_faculty_row}:C{last_faculty_row},"{status}",H{first_faculty_row}:H{last_faculty_row})'
+        ws.cell(total_row, 8, formula if last_faculty_row >= first_faculty_row else 0)
+        ws.cell(total_row, 8).number_format = credit_format
+        ws.cell(total_row, 8).font = Font(name="Arial", size=10, bold=True)
+
+    ws.cell(faculty_total_row, 2, "Proposed total credits").font = Font(name="Arial", size=10, bold=True)
+    ws.cell(faculty_total_row, 8, f"=SUM(H{salaried_total_row}:H{non_salaried_total_row})")
+    ws.cell(faculty_total_row, 8).number_format = credit_format
+    ws.cell(faculty_total_row, 8).font = Font(name="Arial", size=10, bold=True)
+
+    row_number = faculty_total_row + 4
+    ws.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=9)
+    ws.cell(row_number, 2, "Schedule 1(b) -- Contract Salaries").font = Font(name="Arial", size=11, bold=True)
+    row_number += 2
+    contract_header_row = row_number
+    contract_headers = [
+        "Instructor and Course",
+        "Mode / Location",
+        "Credits Taught",
+        "Rate per Credit",
+        "Contract Amount",
+        "Contracts",
+    ]
+    for column, label in enumerate(contract_headers, start=2):
+        cell = ws.cell(row_number, column, label)
+        cell.fill = header_fill
+        cell.font = Font(name="Arial", size=10, bold=True)
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        cell.border = Border(bottom=thin_bottom)
+    row_number += 1
+
+    def write_contract_section(section_title: str, rows: pd.DataFrame, start_row: int) -> tuple[int, int, int]:
+        section_start = start_row
+        ws.merge_cells(start_row=start_row, start_column=2, end_row=start_row, end_column=7)
+        section_cell = ws.cell(start_row, 2, section_title)
+        section_cell.font = Font(name="Arial", size=10, bold=True)
+        section_cell.fill = summary_fill
+        start_row += 1
+        first_detail_row = start_row
+        for semester in semesters:
+            semester_rows = rows.loc[rows["Semester"].eq(semester)].sort_values(["Faculty Name", "Course Text"], na_position="last")
+            if semester_rows.empty:
+                continue
+            ws.cell(start_row, 2, semester)
+            ws.cell(start_row, 2).font = Font(name="Arial", size=10, bold=True)
+            ws.cell(start_row, 2).border = Border(bottom=thin_bottom)
+            start_row += 1
+            for _, contract_row in semester_rows.iterrows():
+                ws.cell(start_row, 2, " ".join(part for part in [_safe_text(contract_row.get("Faculty Name")), _course_schedule_label(contract_row)] if part))
+                ws.cell(start_row, 3, " ".join(part for part in [_safe_text(contract_row.get("Mode")), _location_abbreviation(contract_row.get("Location"))] if part))
+                ws.cell(start_row, 4, contract_row.get("Cr."))
+                ws.cell(start_row, 5, contract_row.get("rate per credit"))
+                ws.cell(start_row, 6, f"=D{start_row}*E{start_row}")
+                ws.cell(start_row, 7, f"=F{start_row}")
+                for column in range(2, 8):
+                    ws.cell(start_row, column).border = Border(bottom=thin_bottom)
+                ws.cell(start_row, 3).alignment = Alignment(horizontal="center")
+                ws.cell(start_row, 4).number_format = credit_format
+                for column in [5, 6, 7]:
+                    ws.cell(start_row, column).number_format = currency_format
+                start_row += 1
+        subtotal_row = start_row
+        ws.cell(subtotal_row, 3, f"Total {section_title}")
+        ws.cell(subtotal_row, 3).font = Font(name="Arial", size=10, bold=True)
+        for column in [4, 6, 7]:
+            column_letter = get_column_letter(column)
+            ws.cell(subtotal_row, column, f"=SUM({column_letter}{first_detail_row}:{column_letter}{subtotal_row - 1})" if subtotal_row > first_detail_row else 0)
+            ws.cell(subtotal_row, column).font = Font(name="Arial", size=10, bold=True)
+            ws.cell(subtotal_row, column).border = Border(bottom=medium_bottom)
+        ws.cell(subtotal_row, 4).number_format = credit_format
+        for column in [6, 7]:
+            ws.cell(subtotal_row, column).number_format = currency_format
+        return subtotal_row + 2, subtotal_row, section_start
+
+    if contract_rows.empty:
+        on_campus = contract_rows.copy()
+        extension = contract_rows.copy()
+    else:
+        off_campus = contract_rows.apply(_is_off_campus_teaching_appointment, axis=1)
+        on_campus = contract_rows.loc[~off_campus].copy()
+        extension = contract_rows.loc[off_campus].copy()
+    row_number, on_campus_total_row, _ = write_contract_section("On Campus Contracts", on_campus, row_number)
+    row_number, extension_total_row, _ = write_contract_section("Extension School Classes", extension, row_number)
+
+    ws.cell(row_number, 3, "Total Contracts")
+    ws.cell(row_number, 3).font = Font(name="Arial", size=11, bold=True)
+    for column in [4, 6, 7]:
+        column_letter = get_column_letter(column)
+        ws.cell(row_number, column, f"={column_letter}{on_campus_total_row}+{column_letter}{extension_total_row}")
+        ws.cell(row_number, column).font = Font(name="Arial", size=11, bold=True)
+        ws.cell(row_number, column).border = Border(bottom=medium_bottom)
+    ws.cell(row_number, 4).number_format = credit_format
+    for column in [6, 7]:
+        ws.cell(row_number, column).number_format = currency_format
+
+    for detail_row in range(contract_header_row, row_number + 1):
+        ws.cell(detail_row, 6).fill = aqua_blue_fill
+        ws.cell(detail_row, 7).fill = light_green_fill
+
+    for column, width in {
+        "A": 3,
+        "B": 40,
+        "C": 22,
+        "D": 24,
+        "E": 14,
+        "F": 14,
+        "G": 16,
+        "H": 18,
+        "I": 18,
+    }.items():
+        ws.column_dimensions[column].width = width
+    ws.freeze_panes = "B15"
+
+
 def generate_department_overview_bundle(
     df: pd.DataFrame,
     department: str,
@@ -1908,6 +2136,7 @@ def generate_department_overview_bundle(
         if "SYNC Schedule" in workbook.sheetnames:
             _set_schedule_class_column_widths(workbook["SYNC Schedule"], 28)
     _add_department_budget_course_schedule(workbook, working, department)
+    _add_department_contracts_sheet(workbook, working, department)
     combined_buffer = BytesIO()
     workbook.save(combined_buffer)
     preview_df = sheets["report_001a"]
