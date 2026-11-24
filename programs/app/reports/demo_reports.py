@@ -2118,21 +2118,26 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
         reduction_validation.add(f"D{first_faculty_row}:D{last_faculty_row}")
 
     salaried_total_row = row_number
-    non_salaried_total_row = row_number + 1
-    faculty_total_row = row_number + 2
+    non_salaried_total_row = row_number + 3
+    faculty_total_row = row_number + 4
     total_rows = [
-        (salaried_total_row, "Proposed credits to be taught by salaried Seminary faculty", "salaried"),
-        (non_salaried_total_row, "Proposed credits to be taught by non-salaried professors", "non-salaried"),
+        (salaried_total_row, "Proposed credits to be taught by salaried Seminary faculty", "salaried", "H"),
+        (row_number + 1, "Proposed load credits to be taught by salaried professors", "salaried", "F"),
+        (row_number + 2, "Proposed contract credits to be taught by salaried professors", "salaried", "G"),
+        (non_salaried_total_row, "Proposed credits to be taught by non-salaried professors", "non-salaried", "H"),
     ]
-    for total_row, label, status in total_rows:
+    for total_row, label, status, credit_column in total_rows:
         ws.cell(total_row, 2, label).font = Font(name="Arial", size=10, bold=True)
-        formula = f'=SUMIF(C{first_faculty_row}:C{last_faculty_row},"{status}",H{first_faculty_row}:H{last_faculty_row})'
+        formula = f'=SUMIF(C{first_faculty_row}:C{last_faculty_row},"{status}",{credit_column}{first_faculty_row}:{credit_column}{last_faculty_row})'
         ws.cell(total_row, 3, formula if last_faculty_row >= first_faculty_row else 0)
         ws.cell(total_row, 3).number_format = credit_format
         ws.cell(total_row, 3).font = Font(name="Arial", size=10, bold=True)
+        fill = PatternFill("solid", fgColor="99D6D0" if status == "salaried" else "FFC7CE")
+        for column in (2, 3):
+            ws.cell(total_row, column).fill = fill
 
     ws.cell(faculty_total_row, 2, "Proposed total credits").font = Font(name="Arial", size=10, bold=True)
-    ws.cell(faculty_total_row, 3, f"=SUM(C{salaried_total_row}:C{non_salaried_total_row})")
+    ws.cell(faculty_total_row, 3, f"=C{salaried_total_row}+C{non_salaried_total_row}")
     ws.cell(faculty_total_row, 3).number_format = credit_format
     ws.cell(faculty_total_row, 3).font = Font(name="Arial", size=10, bold=True)
     for column in range(2, 10):
