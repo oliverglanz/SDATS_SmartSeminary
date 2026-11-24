@@ -62,7 +62,7 @@ FACULTY_STATUS_SOURCE = (
     Path(__file__).resolve().parents[3]
     / "0_source_files"
     / "0000_BuildingFiles"
-    / "source_AutoFill_names_v20261018.xlsx"
+    / "source_AutoFill_names_v20261124.xlsx"
 )
 
 
@@ -1616,6 +1616,19 @@ def _location_abbreviation(value: object) -> str:
     return text
 
 
+def _contract_mode_location(row: pd.Series) -> str:
+    """Use the DonSheet instruction-method and building fields for contracts."""
+    instruction_method = (
+        _safe_text(row.get("Mode Raw"))
+        or _safe_text(row.get("Instruction Method {Inst Method}"))
+        or _safe_text(row.get("Mode"))
+    )
+    building = _safe_text(row.get("Building {Meet Bldg}")) or _safe_text(row.get("Building"))
+    if not building:
+        building = _location_abbreviation(row.get("Location"))
+    return " ".join(part for part in [instruction_method, building] if part)
+
+
 def _course_display_for_contract(row: pd.Series) -> str:
     pieces = [_safe_text(row.get("Faculty Name"))]
     course = _safe_text(row.get("Course Text"))
@@ -1958,6 +1971,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
 
     currency_format = '"$"#,##0.00;[Red]("$"#,##0.00);-'
     credit_format = '#,##0.0;(#,##0.0);-'
+    signed_credit_format = '#,##0.0;-#,##0.0;-'
     aqua_blue_fill = PatternFill("solid", fgColor="00FFFF")
     light_green_fill = PatternFill("solid", fgColor="CCFF90")
     summary_fill = PatternFill("solid", fgColor="D9EAF7")
@@ -2031,6 +2045,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
         for column in [6, 7, 8, 9]:
             ws.cell(row_number, column).number_format = credit_format
             ws.cell(row_number, column).alignment = Alignment(horizontal="center")
+        ws.cell(row_number, 9).number_format = signed_credit_format
         row_number += 1
 
     first_faculty_row = faculty_header_row + 1
@@ -2041,6 +2056,12 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
         status_validation.errorTitle = "Invalid employment status"
         ws.add_data_validation(status_validation)
         status_validation.add(f"C{first_faculty_row}:C{last_faculty_row}")
+
+        reduction_validation = DataValidation(type="list", formula1='"AUSS,Chair,25%,33%,50%,66%"', allow_blank=True)
+        reduction_validation.error = "Choose a listed load reduction reason."
+        reduction_validation.errorTitle = "Invalid load reduction reason"
+        ws.add_data_validation(reduction_validation)
+        reduction_validation.add(f"D{first_faculty_row}:D{last_faculty_row}")
 
     salaried_total_row = row_number
     non_salaried_total_row = row_number + 1
@@ -2108,14 +2129,14 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
                     contract_row.get("Faculty Name"), contract_ids, salaried_names, salaried_ids
                 )
                 ws.cell(start_row, 3, "salaried" if is_salaried else "non-salaried")
-                ws.cell(start_row, 4, " ".join(part for part in [_safe_text(contract_row.get("Mode")), _location_abbreviation(contract_row.get("Location"))] if part))
+                ws.cell(start_row, 4, _contract_mode_location(contract_row))
                 ws.cell(start_row, 5, contract_row.get("Cr."))
                 ws.cell(start_row, 6, contract_row.get("rate per credit"))
                 ws.cell(start_row, 7, f"=E{start_row}*F{start_row}")
                 ws.cell(start_row, 8, f"=G{start_row}")
                 for column in range(2, 9):
                     ws.cell(start_row, column).border = Border(bottom=thin_bottom)
-                ws.cell(start_row, 4).alignment = Alignment(horizontal="center")
+                ws.cell(start_row, 4).alignment = Alignment(horizontal="left")
                 ws.cell(start_row, 5).number_format = credit_format
                 for column in [6, 7, 8]:
                     ws.cell(start_row, column).number_format = currency_format
