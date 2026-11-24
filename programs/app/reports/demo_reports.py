@@ -108,6 +108,10 @@ def _prep_working_df(df: pd.DataFrame, *, department_from_sem: bool = False) -> 
     ]
     for column in text_columns:
         working[column] = _string_column(working, column)
+    # Do not silently drop otherwise usable rows from term-grouped reports
+    # when their DonSheet start date is not set.  A visible label lets the
+    # department correct the date while preserving the reported credits/costs.
+    working["Semester"] = working["Semester"].fillna("Term not set")
     sem_department_alias = working["SEM Department"].str.upper().map(SEM_DEPARTMENT_REPORT_ALIASES)
     working["SEM Department"] = sem_department_alias.fillna(working["SEM Department"])
     working["load/contract"] = _string_column(working, "load/contract").str.lower().fillna("")

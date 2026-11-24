@@ -193,9 +193,12 @@ def _derive_semester_from_start_date(values: pd.Series) -> tuple[pd.Series, pd.S
     """Derive reporting year and semester solely from the semester start date."""
     dates = _parse_donsheet_dates_flexible(values)
     season = pd.Series(pd.NA, index=dates.index, dtype="string")
-    season = season.mask(dates.dt.month.eq(1), "Spring")
-    season = season.mask(dates.dt.month.eq(5), "Summer")
-    season = season.mask(dates.dt.month.eq(8), "Fall")
+    # Courses within one academic term can start in different months (for
+    # example, an intensive MA_Religion course may start in March).  Map the
+    # full term ranges rather than only the traditional term-opening months.
+    season = season.mask(dates.dt.month.between(1, 4), "Spring")
+    season = season.mask(dates.dt.month.between(5, 7), "Summer")
+    season = season.mask(dates.dt.month.between(8, 12), "Fall")
     year = dates.dt.year.astype("Int64")
     label = season.where(year.isna(), season + " " + year.astype("string"))
     return season, year, label
