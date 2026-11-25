@@ -122,6 +122,24 @@ def _is_salaried_faculty(name: object, faculty_ids: pd.Series, salaried_names: s
     return any(_faculty_id_key(value) in salaried_ids for value in faculty_ids.dropna())
 
 
+def _faculty_policy_lookup() -> tuple[dict, dict]:
+    if not FACULTY_STATUS_SOURCE.exists():
+        return {}, {}
+    source = pd.read_excel(FACULTY_STATUS_SOURCE, dtype={"ID#": "string"})
+    by_name, by_id = {}, {}
+    for _, row in source.iterrows():
+        position = _safe_text(row.get("Position"))
+        policy = pd.to_numeric(row.get("Load/Policy"), errors="coerce")
+        values = (position or None, None if pd.isna(policy) else float(policy))
+        name = _faculty_match_key(row.get("Faculty Name"))
+        identifier = _faculty_id_key(row.get("ID#"))
+        if name:
+            by_name.setdefault(name, values)
+        if identifier:
+            by_id.setdefault(identifier, values)
+    return by_name, by_id
+
+
 def _program_equals(series: pd.Series, program: str) -> pd.Series:
     return series.astype("string").fillna("").eq(str(program))
 
@@ -2068,6 +2086,7 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
 
     faculty_rows = all_cycle_rows.loc[all_cycle_rows["Faculty Name"].notna() & all_cycle_rows["Faculty Name"].ne("")].copy()
     salaried_names, salaried_ids = _salaried_faculty_lookup()
+    policy_by_name, policy_by_id = _faculty_policy_lookup()
     faculty_entries: list[tuple[str, bool]] = []
     for faculty_name in _string_column(faculty_rows, "Faculty Name").dropna().unique().tolist():
         person_rows = faculty_rows.loc[faculty_rows["Faculty Name"].eq(faculty_name)]
@@ -2089,8 +2108,12 @@ def _add_department_contracts_sheet(workbook, working: pd.DataFrame, department:
             continue
         ws.cell(row_number, 2, faculty_name)
         ws.cell(row_number, 3, "salaried" if is_salaried else "non-salaried")
-        # Columns D and E intentionally remain blank for the department
-        # secretary to enter the reduction reason and approved load/policy.
+        faculty_ids = person_rows["ID#"] if "ID#" in person_rows.columns else pd.Series(dtype="string")
+        policy = next((policy_by_id[key] for value in faculty_ids.dropna() if (key := _faculty_id_key(value)) in policy_by_id), None)
+        if policy is None:
+            policy = policy_by_name.get(_faculty_match_key(faculty_name), (None, None))
+        ws.cell(row_number, 4, policy[0])
+        ws.cell(row_number, 5, policy[1])
         ws.cell(row_number, 6, load_credits)
         ws.cell(row_number, 7, contract_credits)
         ws.cell(row_number, 8, f"=SUM(F{row_number}:G{row_number})")
