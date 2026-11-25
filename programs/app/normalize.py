@@ -207,8 +207,9 @@ def _derive_semester_from_start_date(values: pd.Series) -> tuple[pd.Series, pd.S
 
 def _build_course_code(df: pd.DataFrame) -> pd.Series:
     subject = df.get("Subject", pd.Series(index=df.index, dtype="string")).astype("string").fillna("")
-    number = df.get("Course Number", pd.Series(index=df.index, dtype="string")).astype("string").fillna("")
-    section = df.get("Course Section", pd.Series(index=df.index, dtype="string")).astype("string").fillna("")
+    number = _numeric_string(df.get("Course Number", pd.Series(index=df.index, dtype="string"))).fillna("")
+    section = _numeric_string(df.get("Course Section", pd.Series(index=df.index, dtype="string"))).fillna("")
+    section = section.where(~section.str.fullmatch(r"\d+"), section.str.zfill(3))
     code = (subject.str.strip() + number.str.strip()).str.strip()
     return code.where(section.eq("") | section.isna(), code + "-" + section.str.strip())
 
