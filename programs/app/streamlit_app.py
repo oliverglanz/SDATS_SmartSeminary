@@ -802,6 +802,13 @@ def _render_shari() -> None:
         )
 
     if action in {ACTION_CONTRACT_DONSHEET, ACTION_CONTRACT_SHARISHEET}:
+        selected_semester = "All"
+        if is_sharisheet_action:
+            selected_semester = st.selectbox(
+                "Semester for contracts",
+                ["All", "Summer", "Fall", "Spring"],
+                key="shari_contract_semester",
+            )
         contract_form_choice = st.radio(
             "Contract forms",
             [
@@ -834,7 +841,9 @@ def _render_shari() -> None:
                     return
             with st.spinner("Creating contract PDFs..."):
                 result = (
-                    generate_contracts_from_sharisheet_uploads(upload_payloads, standard_only=standard_only)
+                    generate_contracts_from_sharisheet_uploads(
+                        upload_payloads, standard_only=standard_only, semester=selected_semester
+                    )
                     if is_sharisheet_action
                     else generate_contracts_from_uploads(upload_payloads, standard_only=standard_only)
                 )

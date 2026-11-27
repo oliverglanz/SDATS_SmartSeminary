@@ -20,7 +20,10 @@ def generate_contracts_from_sharisheet_uploads(
     base_dir: Path | None = None,
     *,
     standard_only: bool = False,
+    semester: str = "All",
 ) -> ContractGenerationResult:
+    if semester not in {"All", "Summer", "Fall", "Spring"}:
+        raise ValueError(f"Unknown semester: {semester}")
     paths = resolve_app_paths(base_dir)
     work_root = Path(tempfile.mkdtemp(prefix="smartseminary_sharisheet_contracts_"))
     output_dir = work_root / "generated_contracts"
@@ -28,6 +31,9 @@ def generate_contracts_from_sharisheet_uploads(
 
     result = normalize_sharisheet_uploads(uploads)
     extracted_rows = _contract_rows_for_pdf(result.canonical_df)
+    if semester != "All" and not extracted_rows.empty:
+        semester_names = extracted_rows["Semester"].astype("string").str.strip().str.split().str[0]
+        extracted_rows = extracted_rows.loc[semester_names.str.casefold().eq(semester.casefold()).fillna(False)].copy()
     contracts = []
 
     if not extracted_rows.empty:
