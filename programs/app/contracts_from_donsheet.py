@@ -660,7 +660,8 @@ def make_pdf_data_for_contract(instructor_name: str, semester: str, year: str, c
     raw_rate = course_row.get("Rate")
     rate_per_credit = DEFAULT_RATE_PER_CREDIT if not _has_value(raw_rate) else safe_number(raw_rate)
     amount_value = rate_per_credit * total_credits if rate_per_credit and total_credits else course_row.get("total contract amount", "")
-    amount_str = str(int(amount_value)) if isinstance(amount_value, (int, float)) and amount_value else ""
+    amount_number = safe_number(amount_value)
+    amount_str = str(int(amount_number)) if math.isfinite(amount_number) and amount_number else ""
 
     begin_m, begin_d, begin_y = split_mmddyyyy(normalize_date(course_row.get("BeginDate")))
     end_m, end_d, end_y = split_mmddyyyy(normalize_date(course_row.get("EndDate")))
