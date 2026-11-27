@@ -482,17 +482,21 @@ def _instructor_filename_token(instructor: object) -> str:
 
 
 def _term_filename_token(term_code: object, semester: object, year: object) -> str:
-    """Return a compact term label, e.g. 20264 or Fall 2026 -> FA26."""
+    """Return a readable term label, e.g. 202641 or Fall 2026 -> 2026-Fall."""
     code = _stringify(term_code)
-    match = re.fullmatch(r"(\d{4})(\d)", code)
+    match = re.fullmatch(r"(\d{4})([234])(?:1)?", code)
     if match:
-        prefix = {"2": "SP", "3": "SU", "4": "FA"}.get(match.group(2))
-        if prefix:
-            return f"{prefix}{match.group(1)[-2:]}"
+        season = {"2": "Spring", "3": "Summer", "4": "Fall"}[match.group(2)]
+        return f"{match.group(1)}-{season}"
 
-    prefix = {"spring": "SP", "summer": "SU", "fall": "FA"}.get(_stringify(semester).lower(), "TERM")
-    year_match = re.search(r"(\d{4})", _stringify(year))
-    return f"{prefix}{year_match.group(1)[-2:]}" if year_match else prefix
+    semester_text = _stringify(semester)
+    season_match = re.search(r"\b(spring|summer|fall)\b", semester_text, re.IGNORECASE)
+    year_match = re.search(r"\b(\d{4})\b", semester_text) or re.search(r"\b(\d{4})\b", _stringify(year))
+    if season_match and year_match:
+        return f"{year_match.group(1)}-{season_match.group(1).title()}"
+    if year_match:
+        return f"{year_match.group(1)}-Term"
+    return "Term"
 
 
 def _location_filename_token(location: object) -> str:
