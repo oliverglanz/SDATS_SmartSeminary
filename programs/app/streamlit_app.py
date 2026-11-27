@@ -28,6 +28,7 @@ from app.config import (
     DEFAULT_SHARISHEET_DIR,
     DEPARTMENT_OPTIONS,
     ENABLE_CLOSE_BUTTON,
+    PROJECT_ROOT,
     ROLE_PASSWORDS,
     SHARED_DONSHEET_LINKS_PATH,
 )
@@ -66,6 +67,7 @@ ACTION_BUDGET_SHARISHEET = "Create budget report workbook - based on ShariSheet"
 ACTION_KAREN_PREFILL = "PreFilling the DonSheet with Banner Data"
 ACTION_KAREN_SCHEDULE = "Create a printable SmartSchedule (Excel, PDF)"
 ACTION_KAREN_SHARED_LINKS = "Manage shared DonSheet links"
+ACTION_KAREN_BANNER_STORAGE = "Upload and download Banner reports"
 ACTION_DEPARTMENT_OVERVIEW = "Generate department overview reports"
 ACTION_DEPARTMENT_BUDGET_READINESS = "Budget Readiness (Is my DonSheet ready for Budget)"
 ACTION_DONSHEET_CONTROL = "DonSheet Control (identifying missing/wrong fields)"
@@ -529,6 +531,52 @@ def _render_department_admins() -> None:
     )
 
 
+def _saved_banner_reports() -> list[Path]:
+    directory = PROJECT_ROOT / "0_BannerSheets"
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (path for path in directory.iterdir() if path.is_file() and not path.name.startswith(("~$", ".")) and path.suffix.lower() in {".xls", ".xlsx"}),
+        key=lambda path: path.name.casefold(),
+    )
+
+
+def _render_karen_banner_reports() -> None:
+    directory = PROJECT_ROOT / "0_BannerSheets"
+    uploaded = st.file_uploader(
+        "Upload Banner report here",
+        type=["xls", "xlsx"],
+        key="karen_banner_storage_upload",
+    )
+    if uploaded is not None and st.button("Save Banner report", type="primary", key="karen_banner_storage_save"):
+        name = Path(uploaded.name.replace("\\", "/")).name
+        if not name or Path(name).suffix.lower() not in {".xls", ".xlsx"}:
+            st.error("Choose an .xls or .xlsx Banner report.")
+        else:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                target = directory / name
+                if target.exists():
+                    st.error(f"A report named {name} already exists. Rename the file before saving it.")
+                else:
+                    with target.open("xb") as report_file:
+                        report_file.write(uploaded.getvalue())
+                    st.success(f"Saved {name}.")
+            except OSError as error:
+                st.error(f"Could not save the Banner report: {error}")
+
+    if directory.is_dir():
+        reports = _saved_banner_reports()
+        for report in reports:
+            try:
+                data = report.read_bytes()
+            except OSError as error:
+                st.warning(f"Could not read {report.name}: {error}")
+                continue
+            mime = "application/vnd.ms-excel" if report.suffix.lower() == ".xls" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            st.download_button(f"Download {report.name}", data=data, file_name=report.name, mime=mime, key=f"karen_banner_download_{report.name}")
+
+
 def _render_karen() -> None:
     st.subheader("Karen")
 
@@ -542,12 +590,16 @@ def _render_karen() -> None:
         options=[
             ACTION_KAREN_PREFILL,
             ACTION_KAREN_SCHEDULE,
+            ACTION_KAREN_BANNER_STORAGE,
             ACTION_DEPARTMENT_OVERVIEW,
             ACTION_DONSHEET_CONTROL,
             ACTION_KAREN_SHARED_LINKS,
         ],
         key="karen_action",
     )
+    if action == ACTION_KAREN_BANNER_STORAGE:
+        _render_karen_banner_reports()
+        return
     if action == ACTION_KAREN_SHARED_LINKS:
         _render_karen_shared_link_manager()
         return
@@ -565,13 +617,29 @@ def _render_karen() -> None:
         return
 
     if action == ACTION_KAREN_PREFILL:
-        st.write("Upload a Banner Sheet to populate the latest formula-enabled DonSheet template.")
-        banner_file = st.file_uploader(
-            "Upload Banner Sheet",
-            type=["xlsx", "xls", "csv"],
-            accept_multiple_files=False,
-            key="karen_prefill_banner_upload",
+        st.write("Choose a Banner report to populate the latest formula-enabled DonSheet template.")
+        source_choice = st.radio(
+            "Banner report source",
+            ["Saved Banner report", "Upload a new file"],
+            key="karen_prefill_banner_source",
         )
+        banner_file = None
+        saved_report = None
+        if source_choice == "Saved Banner report":
+            reports = _saved_banner_reports()
+            if reports:
+                saved_report = st.selectbox(
+                    "Choose a saved Banner report", reports,
+                    format_func=lambda path: path.name,
+                    key="karen_prefill_saved_banner",
+                )
+            else:
+                st.info("No saved Banner reports are available. Upload a new file or save one in Upload and download Banner reports.")
+        else:
+            banner_file = st.file_uploader(
+                "Upload Banner Sheet", type=["xlsx", "xls", "csv"],
+                accept_multiple_files=False, key="karen_prefill_banner_upload",
+            )
         protect_workbook = st.checkbox(
             "Password-protect the prefilled DonSheet",
             value=False,
@@ -586,19 +654,19 @@ def _render_karen() -> None:
             )
         if st.button("Prefill DonSheet from Banner Data", type="primary", key="karen_prefill_generate"):
             st.session_state.pop(KAREN_PREFILL_RESULT_KEY, None)
-            if banner_file is None:
-                st.error("Upload a Banner Sheet before prefilling the DonSheet.")
+            if banner_file is None and saved_report is None:
+                st.error("Select a saved Banner report or upload a Banner Sheet before prefilling the DonSheet.")
             elif protect_workbook and not protection_password:
                 st.error("Enter a password or turn off password protection.")
             else:
                 with st.spinner("Populating the DonSheet template from Banner data..."):
                     try:
                         st.session_state[KAREN_PREFILL_RESULT_KEY] = prefill_donsheet_from_banner(
-                            banner_file.getvalue(),
-                            banner_file.name,
+                            saved_report.read_bytes() if saved_report is not None else banner_file.getvalue(),
+                            saved_report.name if saved_report is not None else banner_file.name,
                             worksheet_password=protection_password if protect_workbook else None,
                         )
-                    except (KeyError, ValueError, FileNotFoundError) as error:
+                    except (KeyError, ValueError, OSError, ImportError) as error:
                         st.error(str(error))
 
         result = st.session_state.get(KAREN_PREFILL_RESULT_KEY)
@@ -734,6 +802,15 @@ def _render_shari() -> None:
         )
 
     if action in {ACTION_CONTRACT_DONSHEET, ACTION_CONTRACT_SHARISHEET}:
+        contract_form_choice = st.radio(
+            "Contract forms",
+            [
+                "Fill the standard and intensive contract forms where relevant",
+                "Fill in only the standard contract form for any contract",
+            ],
+            key="shari_contract_form_choice",
+        )
+        standard_only = contract_form_choice == "Fill in only the standard contract form for any contract"
         create_clicked = st.button("Generate contract PDFs", type="primary", key="shari_generate_contracts")
         if create_clicked:
             previous = st.session_state.pop(SHARI_CONTRACT_RESULT_KEY, None)
@@ -757,9 +834,9 @@ def _render_shari() -> None:
                     return
             with st.spinner("Creating contract PDFs..."):
                 result = (
-                    generate_contracts_from_sharisheet_uploads(upload_payloads)
+                    generate_contracts_from_sharisheet_uploads(upload_payloads, standard_only=standard_only)
                     if is_sharisheet_action
-                    else generate_contracts_from_uploads(upload_payloads)
+                    else generate_contracts_from_uploads(upload_payloads, standard_only=standard_only)
                 )
             st.session_state[SHARI_CONTRACT_RESULT_KEY] = result
 

@@ -90,6 +90,8 @@ def _matching_pdf_templates(folder: Path, template_kind: str) -> list[Path]:
 def generate_contracts_from_uploads(
     uploads: list[tuple[str, bytes]],
     base_dir: Path | None = None,
+    *,
+    standard_only: bool = False,
 ) -> ContractGenerationResult:
     paths = resolve_app_paths(base_dir)
     work_root = Path(tempfile.mkdtemp(prefix="smartseminary_contracts_"))
@@ -116,6 +118,7 @@ def generate_contracts_from_uploads(
                     output_dir,
                     filename_prefix=f"{sanitize_filename(input_path.stem)}__",
                     source_file=input_path.name,
+                    standard_only=standard_only,
                 )
             )
 
@@ -499,6 +502,14 @@ def _location_filename_token(location: object) -> str:
     return sanitize_filename(match.group(1)) if match else sanitize_filename(text)
 
 
+def _contract_reason_with_context(reason: object, program: object, location: object) -> str:
+    location_text = _stringify(location)
+    match = re.search(r"\[([^\[\]]+)\]", location_text)
+    if match:
+        location_text = match.group(1).strip()
+    return " / ".join(value for value in (_stringify(reason), _stringify(program), location_text) if value)
+
+
 def contract_filename_stem(course: dict[str, object]) -> str:
     """Build Instructor_CourseInfo_Program_Location_Date for one contract."""
     instructor = _instructor_filename_token(course.get("Instructor"))
@@ -664,7 +675,10 @@ def make_pdf_data_for_contract(instructor_name: str, semester: str, year: str, c
         "remote_yes": "/Yes" if str(course_row.get("Remote", "")).strip().lower() in ("yes", "y", "true", "1") else "/Off",
         "dept_contact_name": course_row.get("DeptContact", ""),
         "dept_contact_id": format_id(course_row.get("DeptContactID")),
-        "reason": course_row.get("Reason", ""),
+        "reason": _contract_reason_with_context(
+            course_row.get("Reason"), course_row.get("Program"),
+            _stringify(course_row.get("Building")) or course_row.get("Location"),
+        ),
         "spring_yes": NameObject("/Yes") if str(semester).strip().lower() == "spring" else NameObject("/Off"),
         "summer_yes": NameObject("/Yes") if str(semester).strip().lower() == "summer" else NameObject("/Off"),
         "fall_yes": NameObject("/Yes") if str(semester).strip().lower() == "fall" else NameObject("/Off"),
@@ -861,6 +875,8 @@ def generate_contract_pdfs(
     output_dir: Path,
     filename_prefix: str = "",
     source_file: str = "",
+    *,
+    standard_only: bool = False,
 ) -> list[GeneratedContract]:
     contracts: list[GeneratedContract] = []
     if df_course.empty:
@@ -872,7 +888,7 @@ def generate_contract_pdfs(
         instructor = str(course.get("Instructor", "") or "")
         semester = str(course.get("Semester", "") or "")
         year = str(course.get("Year", "") or "")
-        contract_type = "intensive" if has_intensive_period(course) else "standard"
+        contract_type = "intensive" if not standard_only and has_intensive_period(course) else "standard"
         template_path = paths.intensive_template if contract_type == "intensive" else paths.standard_template
 
         data = make_pdf_data_for_contract(instructor, semester, year, course)

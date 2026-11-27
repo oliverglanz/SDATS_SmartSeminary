@@ -15,6 +15,7 @@ services:
       SMART_SEMINARY_PASSWORD_SHARI: "${SMART_SEMINARY_PASSWORD_SHARI:-irahS}"
     volumes:
       - "./outputs_app:/app/outputs_app"
+      - "./0_BannerSheets:/app/0_BannerSheets"
       - "../SmartBudgeting/Step1_input_ShariSheets:/SmartBudgeting/Step1_input_ShariSheets:ro"
     healthcheck:
       test:

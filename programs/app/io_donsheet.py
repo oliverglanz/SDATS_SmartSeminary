@@ -91,7 +91,8 @@ def _red_highlighted_row_indices(sheet: Worksheet, column_count: int) -> set[int
     red_rows: set[int] = set()
     for row_number in range(2, sheet.max_row + 1):
         row_cells = sheet[row_number][: max(column_count, 1)]
-        if any(_cell_has_red_fill(cell) for cell in row_cells):
+        # Individual red cells mark edits; seven or more mark an excluded row.
+        if sum(_cell_has_red_fill(cell) for cell in row_cells) >= 7:
             red_rows.add(row_number - 2)
     return red_rows
 

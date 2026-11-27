@@ -18,6 +18,8 @@ from .sharisheet import normalize_sharisheet_uploads
 def generate_contracts_from_sharisheet_uploads(
     uploads: list[tuple[str, bytes]],
     base_dir: Path | None = None,
+    *,
+    standard_only: bool = False,
 ) -> ContractGenerationResult:
     paths = resolve_app_paths(base_dir)
     work_root = Path(tempfile.mkdtemp(prefix="smartseminary_sharisheet_contracts_"))
@@ -38,6 +40,7 @@ def generate_contracts_from_sharisheet_uploads(
                     output_dir,
                     filename_prefix=f"{sanitize_filename(Path(source_text).stem)}__",
                     source_file=source_text,
+                    standard_only=standard_only,
                 )
             )
 
@@ -70,7 +73,7 @@ def _contract_rows_for_pdf(df: pd.DataFrame) -> pd.DataFrame:
     working["International"] = _text_column(working, "international")
     working["DeptContact"] = _text_column(working, "Dept contact name")
     working["DeptContactID"] = _text_column(working, "Dept contact ID#")
-    working["Reason"] = _combined_reason(working)
+    working["Reason"] = _text_column(working, "Reason for Contract")
     working["Year"] = _text_column(working, "Semester").str.extract(r"(\d{4})$", expand=False).fillna("")
     working["Term Code"] = _text_column(working, "Term Code")
     working["Program"] = _text_column(working, "Program")
